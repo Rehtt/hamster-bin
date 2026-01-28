@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电子元件库存管理系统</title>
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <!-- Element Plus Icons -->
+    <link rel="stylesheet" href="https://unpkg.com/@element-plus/icons-vue/dist/style.css">
+    <!-- HTML5 QR Code Scanner -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: #f5f7fa;
+        }
+
+        #app {
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 0;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-title h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-title .icon {
+            font-size: 32px;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 30px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        .el-tabs {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .toolbar {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .search-bar {
+            display: flex;
+            gap: 10px;
+            flex: 1;
+            max-width: 800px;
+        }
+
+        .stock-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .stock-high {
+            background: #f0f9ff;
+            color: #0284c7;
+        }
+
+        .stock-medium {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .stock-low {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .component-image {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .no-image {
+            width: 50px;
+            height: 50px;
+            background: #f3f4f6;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #9ca3af;
+        }
+
+        .el-dialog__body {
+            padding: 20px 30px;
+        }
+
+        .form-section {
+            margin-bottom: 15px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #6b7280;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            opacity: 0.5;
+            margin-bottom: 20px;
+        }
+
+        .log-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            background: #f9fafb;
+        }
+
+        .log-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .log-in {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .log-out {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .log-content {
+            flex: 1;
+        }
+
+        .log-title {
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .log-meta {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .category-tree {
+            margin-top: 20px;
+        }
+
+        .qrcode-scanner {
+            margin: 20px 0;
+        }
+
+        #qr-reader {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        #qr-reader video {
+            width: 100%;
+            border-radius: 6px;
+        }
+
+        .scanner-actions {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 20px;
+                text-align: center;
+            }
+
+            .toolbar {
+                flex-direction: column;
+            }
+
+            .search-bar {
+                max-width: 100%;
+            }
+
+            /* 对话框自适应 */
+            .el-dialog {
+                width: 95% !important;
+                max-width: 95% !important;
+            }
+
+            .el-dialog__body {
+                padding: 15px 15px;
+            }
+
+            /* 平台导入区域自适应 */
+            .platform-import-box {
+                flex-direction: column;
+                align-items: stretch !important;
+            }
+            
+            .platform-import-box .el-button {
+                width: 100%;
+            }
+
+            /* 表单标签自适应 */
+            .el-form-item__label {
+                float: none;
+                display: block;
+                text-align: left;
+                padding: 0 0 8px;
+            }
+            
+            .el-form-item__content {
+                margin-left: 0 !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 顶部导航 -->
+        <div class="header">
+            <div class="header-content">
+                <div class="header-title">
+                    <span class="icon">📦</span>
+                    <h1>电子元件库存管理系统</h1>
+                </div>
+                <div class="header-stats">
+                    <div class="stat-item">
+                        <div class="stat-value">{{ stats.totalComponents }}</div>
+                        <div class="stat-label">元件种类</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{{ stats.totalStock }}</div>
+                        <div class="stat-label">总库存</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{{ stats.categories }}</div>
+                        <div class="stat-label">分类数量</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <el-tabs v-model="activeTab" type="border-card">
+                <!-- 元件管理 -->
+                <el-tab-pane label="元件管理" name="components">
+                    <template #label>
+                        <span><i class="el-icon-box"></i> 元件管理</span>
+                    </template>
+
+                    <div class="toolbar">
+                        <div class="search-bar">
+                            <el-input 
+                                v-model="componentSearch.keyword" 
+                                placeholder="搜索元件名称、型号、描述..." 
+                                clearable
+                                @clear="loadComponents"
+                                @keyup.enter="loadComponents">
+                                <template #prefix>
+                                    <i class="el-icon-search"></i>
+                                </template>
+                            </el-input>
+                            <el-select 
+                                v-model="componentSearch.categoryId" 
+                                placeholder="选择分类" 
+                                clearable
+                                @change="loadComponents"
+                                style="width: 200px;">
+                                <el-option 
+                                    v-for="cat in categories" 
+                                    :key="cat.id" 
+                                    :label="cat.name" 
+                                    :value="cat.id">
+                                </el-option>
+                            </el-select>
+                            <el-button type="primary" @click="loadComponents">搜索</el-button>
+                        </div>
+                        <el-button type="primary" @click="showComponentDialog(null)">
+                            <i class="el-icon-plus"></i> 添加元件
+                        </el-button>
+                    </div>
+
+                    <el-table 
+                        :data="components" 
+                        v-loading="loading"
+                        stripe
+                        style="width: 100%">
+                        <el-table-column type="index" width="60" label="#"></el-table-column>
+                        <el-table-column label="图片" width="80">
+                            <template #default="scope">
+                                <img v-if="scope.row.image_url" :src="scope.row.image_url" class="component-image">
+                                <div v-else class="no-image">📦</div>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="name" label="名称" min-width="150"></el-table-column>
+                        <el-table-column prop="value" label="参数值" width="100"></el-table-column>
+                        <el-table-column prop="package" label="封装" width="100"></el-table-column>
+                        <el-table-column label="分类" width="120">
+                            <template #default="scope">
+                                <el-tag v-if="scope.row.category" size="small">{{ scope.row.category.name }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="库存" width="120">
+                            <template #default="scope">
+                                <span :class="getStockClass(scope.row.stock_quantity)">
+                                    {{ scope.row.stock_quantity }}
+                                </span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="location" label="位置" width="100"></el-table-column>
+                        <el-table-column prop="description" label="描述" min-width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column label="操作" width="280" fixed="right">
+                            <template #default="scope">
+                                <el-button size="small" @click="showComponentDialog(scope.row)">编辑</el-button>
+                                <el-button size="small" type="success" @click="showStockDialog(scope.row)">库存</el-button>
+                                <el-button size="small" type="info" @click="showLogsDialog(scope.row)">记录</el-button>
+                                <el-button size="small" type="danger" @click="deleteComponent(scope.row)">删除</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+
+                    <el-pagination
+                        v-if="componentPagination.total > 0"
+                        @current-change="handlePageChange"
+                        @size-change="handleSizeChange"
+                        :current-page="componentPagination.page"
+                        :page-sizes="[10, 20, 50, 100]"
+                        :page-size="componentPagination.pageSize"
+                        :total="componentPagination.total"
+                        layout="total, sizes, prev, pager, next, jumper"
+                        style="margin-top: 20px; text-align: right;">
+                    </el-pagination>
+                </el-tab-pane>
+
+                <!-- 分类管理 -->
+                <el-tab-pane label="分类管理" name="categories">
+                    <template #label>
+                        <span><i class="el-icon-folder"></i> 分类管理</span>
+                    </template>
+
+                    <div class="toolbar">
+                        <div></div>
+                        <el-button type="primary" @click="showCategoryDialog(null)">
+                            <i class="el-icon-plus"></i> 添加分类
+                        </el-button>
+                    </div>
+
+                    <el-table :data="categories" v-loading="loading" stripe style="width: 100%">
+                        <el-table-column type="index" width="60" label="#"></el-table-column>
+                        <el-table-column prop="name" label="分类名称" min-width="200"></el-table-column>
+                        <el-table-column prop="id" label="ID" width="80"></el-table-column>
+                        <el-table-column label="操作" width="200">
+                            <template #default="scope">
+                                <el-button size="small" @click="showCategoryDialog(scope.row)">编辑</el-button>
+                                <el-button size="small" type="danger" @click="deleteCategory(scope.row)">删除</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+
+                <!-- 库存记录 -->
+                <el-tab-pane label="库存记录" name="logs">
+                    <template #label>
+                        <span><i class="el-icon-document"></i> 库存记录</span>
+                    </template>
+
+                    <div v-if="stockLogs.length > 0">
+                        <div v-for="log in stockLogs" :key="log.id" class="log-item">
+                            <div :class="['log-icon', log.change_amount > 0 ? 'log-in' : 'log-out']">
+                                {{ log.change_amount > 0 ? '📥' : '📤' }}
+                            </div>
+                            <div class="log-content">
+                                <div class="log-title">
+                                    <span v-if="log.component">{{ log.component.name }}</span>
+                                    <el-tag :type="log.change_amount > 0 ? 'success' : 'danger'" size="small" style="margin-left: 10px;">
+                                        {{ log.change_amount > 0 ? '+' : '' }}{{ log.change_amount }}
+                                    </el-tag>
+                                </div>
+                                <div class="log-meta">
+                                    {{ log.reason || '无备注' }} · {{ formatDate(log.created_at) }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <el-pagination
+                            @current-change="handleLogPageChange"
+                            :current-page="logPagination.page"
+                            :page-size="logPagination.pageSize"
+                            :total="logPagination.total"
+                            layout="total, prev, pager, next"
+                            style="margin-top: 20px; text-align: right;">
+                        </el-pagination>
+                    </div>
+                    <div v-else class="empty-state">
+                        <div class="empty-state-icon">📋</div>
+                        <p>暂无库存记录</p>
+                    </div>
+                </el-tab-pane>
+            </el-tabs>
+        </div>
+
+        <!-- 元件表单对话框 -->
+        <el-dialog 
+            v-model="componentDialogVisible" 
+            :title="componentForm.id ? '编辑元件' : '添加元件'"
+            width="600px">
+            
+            <!-- 平台导入区域 (仅在添加时显示) -->
+            <el-alert 
+                v-if="!componentForm.id && supportedPlatforms.length > 0"
+                title="💡 提示：可以从平台快速导入元件信息"
+                type="info"
+                :closable="false"
+                style="margin-bottom: 20px;">
+                <template #default>
+                    <div class="platform-import-box" style="display: flex; gap: 10px; margin-top: 10px; align-items: center;">
+                        <el-input 
+                            v-model="platformCode" 
+                            placeholder="输入平台编码（如：C2040）"
+                            style="flex: 1;"
+                            @keyup.enter="parseFromPlatform">
+                            <template #prepend>
+                                <span>🔍</span>
+                            </template>
+                        </el-input>
+                        <el-button 
+                            type="primary" 
+                            @click="parseFromPlatform"
+                            :loading="platformParsing">
+                            {{ platformParsing ? '解析中...' : '解析' }}
+                        </el-button>
+                        <el-button 
+                            type="success" 
+                            @click="openQRScanner">
+                            📷 扫码
+                        </el-button>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #909399;">
+                        支持平台: {{ supportedPlatforms.join('、') }} | 支持二维码扫描
+                    </div>
+                </template>
+            </el-alert>
+
+            <el-form :model="componentForm" label-width="100px">
+                <el-form-item label="分类" required>
+                    <el-select v-model="componentForm.category_id" placeholder="请选择分类" style="width: 100%;">
+                        <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="元件名称" required>
+                    <el-input v-model="componentForm.name" placeholder="例如: ESP32-WROOM-32"></el-input>
+                </el-form-item>
+                <el-form-item label="参数值">
+                    <el-input v-model="componentForm.value" placeholder="例如: 10kΩ, 100nF"></el-input>
+                </el-form-item>
+                <el-form-item label="封装">
+                    <el-input v-model="componentForm.package" placeholder="例如: 0805, SOP-8"></el-input>
+                </el-form-item>
+                <el-form-item label="库存数量" required>
+                    <el-input-number v-model="componentForm.stock_quantity" :min="0" style="width: 100%;"></el-input-number>
+                </el-form-item>
+                <el-form-item label="存放位置">
+                    <el-input v-model="componentForm.location" placeholder="例如: A-1, 盒子B"></el-input>
+                </el-form-item>
+                <el-form-item label="描述">
+                    <el-input 
+                        v-model="componentForm.description" 
+                        type="textarea" 
+                        :rows="3"
+                        placeholder="元件的详细描述">
+                    </el-input>
+                </el-form-item>
+                <el-form-item label="数据手册">
+                    <el-input v-model="componentForm.datasheet_url" placeholder="数据手册 URL"></el-input>
+                </el-form-item>
+                <el-form-item label="图片 URL">
+                    <el-input v-model="componentForm.image_url" placeholder="图片 URL"></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="componentDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveComponent">保存</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 分类表单对话框 -->
+        <el-dialog 
+            v-model="categoryDialogVisible" 
+            :title="categoryForm.id ? '编辑分类' : '添加分类'"
+            width="500px">
+            <el-form :model="categoryForm" label-width="100px">
+                <el-form-item label="分类名称" required>
+                    <el-input v-model="categoryForm.name" placeholder="例如: 电阻, 电容, 微控制器"></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="categoryDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveCategory">保存</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 库存操作对话框 -->
+        <el-dialog 
+            v-model="stockDialogVisible" 
+            title="库存变更"
+            width="500px">
+            <div v-if="currentComponent">
+                <el-alert 
+                    :title="`当前库存: ${currentComponent.stock_quantity}`" 
+                    type="info" 
+                    :closable="false"
+                    style="margin-bottom: 20px;">
+                </el-alert>
+                <el-form :model="stockForm" label-width="100px">
+                    <el-form-item label="操作类型" required>
+                        <el-radio-group v-model="stockForm.type">
+                            <el-radio-button label="in">入库</el-radio-button>
+                            <el-radio-button label="out">出库</el-radio-button>
+                        </el-radio-group>
+                    </el-form-item>
+                    <el-form-item label="数量" required>
+                        <el-input-number 
+                            v-model="stockForm.amount" 
+                            :min="1" 
+                            :max="stockForm.type === 'out' ? currentComponent.stock_quantity : 999999"
+                            style="width: 100%;">
+                        </el-input-number>
+                    </el-form-item>
+                    <el-form-item label="备注">
+                        <el-input 
+                            v-model="stockForm.reason" 
+                            type="textarea" 
+                            :rows="3"
+                            placeholder="例如: 采购、项目使用等">
+                        </el-input>
+                    </el-form-item>
+                </el-form>
+            </div>
+            <template #footer>
+                <el-button @click="stockDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="updateStock">确认</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 库存记录对话框 -->
+        <el-dialog 
+            v-model="logsDialogVisible" 
+            title="库存记录"
+            width="600px">
+            <div v-if="componentLogs.length > 0">
+                <div v-for="log in componentLogs" :key="log.id" class="log-item">
+                    <div :class="['log-icon', log.change_amount > 0 ? 'log-in' : 'log-out']">
+                        {{ log.change_amount > 0 ? '📥' : '📤' }}
+                    </div>
+                    <div class="log-content">
+                        <div class="log-title">
+                            <el-tag :type="log.change_amount > 0 ? 'success' : 'danger'" size="small">
+                                {{ log.change_amount > 0 ? '+' : '' }}{{ log.change_amount }}
+                            </el-tag>
+                        </div>
+                        <div class="log-meta">
+                            {{ log.reason || '无备注' }} · {{ formatDate(log.created_at) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div v-else class="empty-state">
+                <div class="empty-state-icon">📋</div>
+                <p>暂无记录</p>
+            </div>
+        </el-dialog>
+
+        <!-- 二维码扫描对话框 -->
+        <el-dialog 
+            v-model="qrScannerDialogVisible" 
+            title="📷 扫描二维码"
+            width="600px"
+            @close="closeQRScanner">
+            <div class="qrcode-scanner">
+                <el-alert 
+                    title="扫描立创商城元件二维码，自动识别元件信息和数量"
+                    type="info"
+                    :closable="false"
+                    style="margin-bottom: 20px;">
+                </el-alert>
+
+                <!-- 二维码扫描区域 -->
+                <div id="qr-reader" style="width: 100%;"></div>
+
+                <!-- 扫描结果显示 -->
+                <div v-if="qrScanResult" style="margin-top: 20px;">
+                    <el-alert 
+                        title="扫描成功！"
+                        type="success"
+                        :closable="false">
+                        <template #default>
+                            <div style="font-size: 14px; margin-top: 10px;">
+                                <strong>扫描内容：</strong>{{ qrScanResult }}
+                            </div>
+                        </template>
+                    </el-alert>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="scanner-actions">
+                    <el-button 
+                        v-if="!qrScanning" 
+                        type="primary" 
+                        @click="startQRScanner">
+                        开始扫描
+                    </el-button>
+                    <el-button 
+                        v-if="qrScanning" 
+                        type="danger" 
+                        @click="stopQRScanner">
+                        停止扫描
+                    </el-button>
+                    <el-upload
+                        :show-file-list="false"
+                        :before-upload="handleQRImageUpload"
+                        accept="image/*">
+                        <el-button type="info">上传图片</el-button>
+                    </el-upload>
+                </div>
+            </div>
+            <template #footer>
+                <el-button @click="closeQRScanner">关闭</el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Element Plus -->
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- Axios -->
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    activeTab: 'components',
+                    loading: false,
+                    
+                    // 统计数据
+                    stats: {
+                        totalComponents: 0,
+                        totalStock: 0,
+                        categories: 0
+                    },
+
+                    // 分类
+                    categories: [],
+                    categoryDialogVisible: false,
+                    categoryForm: {
+                        id: null,
+                        name: ''
+                    },
+
+                    // 元件
+                    components: [],
+                    componentDialogVisible: false,
+                    componentForm: {
+                        id: null,
+                        category_id: null,
+                        name: '',
+                        value: '',
+                        package: '',
+                        description: '',
+                        stock_quantity: 0,
+                        location: '',
+                        datasheet_url: '',
+                        image_url: ''
+                    },
+                    componentSearch: {
+                        keyword: '',
+                        categoryId: null
+                    },
+                    componentPagination: {
+                        page: 1,
+                        pageSize: 20,
+                        total: 0
+                    },
+
+                    // 库存操作
+                    stockDialogVisible: false,
+                    currentComponent: null,
+                    stockForm: {
+                        type: 'in',
+                        amount: 1,
+                        reason: ''
+                    },
+
+                    // 库存记录
+                    stockLogs: [],
+                    logPagination: {
+                        page: 1,
+                        pageSize: 20,
+                        total: 0
+                    },
+
+                    // 元件库存记录
+                    logsDialogVisible: false,
+                    componentLogs: [],
+
+                    // 平台导入
+                    platformCode: '',
+                    platformParsing: false,
+                    supportedPlatforms: [],
+
+                    // 二维码扫描
+                    qrScannerDialogVisible: false,
+                    qrScanning: false,
+                    qrScanner: null,
+                    qrScanResult: ''
+                };
+            },
+            mounted() {
+                this.loadCategories();
+                this.loadComponents();
+                this.loadStockLogs();
+                this.loadSupportedPlatforms();
+            },
+            methods: {
+                // API 基础地址
+                apiUrl(path) {
+                    return `/api/v1${path}`;
+                },
+
+                // 加载分类
+                async loadCategories() {
+                    try {
+                        const response = await axios.get(this.apiUrl('/categories'));
+                        this.categories = response.data.data || [];
+                        this.stats.categories = this.categories.length;
+                    } catch (error) {
+                        this.$message.error('加载分类失败: ' + error.message);
+                    }
+                },
+
+                // 显示分类对话框
+                showCategoryDialog(category) {
+                    if (category) {
+                        this.categoryForm = { ...category };
+                    } else {
+                        this.categoryForm = { id: null, name: '' };
+                    }
+                    this.categoryDialogVisible = true;
+                },
+
+                // 保存分类
+                async saveCategory() {
+                    if (!this.categoryForm.name) {
+                        this.$message.warning('请输入分类名称');
+                        return;
+                    }
+
+                    try {
+                        if (this.categoryForm.id) {
+                            await axios.put(this.apiUrl(`/categories/${this.categoryForm.id}`), this.categoryForm);
+                            this.$message.success('更新成功');
+                        } else {
+                            await axios.post(this.apiUrl('/categories'), this.categoryForm);
+                            this.$message.success('添加成功');
+                        }
+                        this.categoryDialogVisible = false;
+                        this.loadCategories();
+                    } catch (error) {
+                        this.$message.error('保存失败: ' + error.message);
+                    }
+                },
+
+                // 删除分类
+                async deleteCategory(category) {
+                    try {
+                        await this.$confirm(`确定要删除分类 "${category.name}" 吗？`, '提示', {
+                            confirmButtonText: '确定',
+                            cancelButtonText: '取消',
+                            type: 'warning'
+                        });
+
+                        await axios.delete(this.apiUrl(`/categories/${category.id}`));
+                        this.$message.success('删除成功');
+                        this.loadCategories();
+                    } catch (error) {
+                        if (error !== 'cancel') {
+                            this.$message.error('删除失败: ' + error.message);
+                        }
+                    }
+                },
+
+                // 加载元件
+                async loadComponents() {
+                    this.loading = true;
+                    try {
+                        const params = {
+                            page: this.componentPagination.page,
+                            page_size: this.componentPagination.pageSize
+                        };
+                        
+                        if (this.componentSearch.keyword) {
+                            params.keyword = this.componentSearch.keyword;
+                        }
+                        if (this.componentSearch.categoryId) {
+                            params.category_id = this.componentSearch.categoryId;
+                        }
+
+                        const response = await axios.get(this.apiUrl('/components'), { params });
+                        this.components = response.data.data || [];
+                        this.componentPagination.total = response.data.pagination?.total || 0;
+
+                        // 更新统计
+                        this.stats.totalComponents = this.componentPagination.total;
+                        this.stats.totalStock = this.components.reduce((sum, c) => sum + c.stock_quantity, 0);
+                    } catch (error) {
+                        this.$message.error('加载元件失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                // 显示元件对话框
+                showComponentDialog(component) {
+                    if (component) {
+                        this.componentForm = { ...component };
+                    } else {
+                        this.componentForm = {
+                            id: null,
+                            category_id: null,
+                            name: '',
+                            value: '',
+                            package: '',
+                            description: '',
+                            stock_quantity: 0,
+                            location: '',
+                            datasheet_url: '',
+                            image_url: ''
+                        };
+                    }
+                    this.componentDialogVisible = true;
+                },
+
+                // 保存元件
+                async saveComponent() {
+                    if (!this.componentForm.name || !this.componentForm.category_id) {
+                        this.$message.warning('请填写必填项');
+                        return;
+                    }
+
+                    try {
+                        if (this.componentForm.id) {
+                            await axios.put(this.apiUrl(`/components/${this.componentForm.id}`), this.componentForm);
+                            this.$message.success('更新成功');
+                        } else {
+                            await axios.post(this.apiUrl('/components'), this.componentForm);
+                            this.$message.success('添加成功');
+                        }
+                        this.componentDialogVisible = false;
+                        this.loadComponents();
+                    } catch (error) {
+                        this.$message.error('保存失败: ' + error.message);
+                    }
+                },
+
+                // 删除元件
+                async deleteComponent(component) {
+                    try {
+                        await this.$confirm(`确定要删除元件 "${component.name}" 吗？`, '提示', {
+                            confirmButtonText: '确定',
+                            cancelButtonText: '取消',
+                            type: 'warning'
+                        });
+
+                        await axios.delete(this.apiUrl(`/components/${component.id}`));
+                        this.$message.success('删除成功');
+                        this.loadComponents();
+                    } catch (error) {
+                        if (error !== 'cancel') {
+                            this.$message.error('删除失败: ' + error.message);
+                        }
+                    }
+                },
+
+                // 显示库存对话框
+                showStockDialog(component) {
+                    this.currentComponent = component;
+                    this.stockForm = {
+                        type: 'in',
+                        amount: 1,
+                        reason: ''
+                    };
+                    this.stockDialogVisible = true;
+                },
+
+                // 更新库存
+                async updateStock() {
+                    if (!this.stockForm.amount || this.stockForm.amount <= 0) {
+                        this.$message.warning('请输入有效的数量');
+                        return;
+                    }
+
+                    try {
+                        const amount = this.stockForm.type === 'in' ? this.stockForm.amount : -this.stockForm.amount;
+                        await axios.post(this.apiUrl(`/components/${this.currentComponent.id}/stock`), {
+                            amount: amount,
+                            reason: this.stockForm.reason
+                        });
+                        
+                        this.$message.success('库存更新成功');
+                        this.stockDialogVisible = false;
+                        this.loadComponents();
+                        this.loadStockLogs();
+                    } catch (error) {
+                        this.$message.error('更新失败: ' + error.message);
+                    }
+                },
+
+                // 显示库存记录
+                async showLogsDialog(component) {
+                    this.currentComponent = component;
+                    this.logsDialogVisible = true;
+                    
+                    try {
+                        const response = await axios.get(this.apiUrl(`/components/${component.id}/logs`));
+                        this.componentLogs = response.data.data || [];
+                    } catch (error) {
+                        this.$message.error('加载记录失败: ' + error.message);
+                    }
+                },
+
+                // 加载库存记录
+                async loadStockLogs() {
+                    try {
+                        const response = await axios.get(this.apiUrl('/stock-logs'), {
+                            params: {
+                                page: this.logPagination.page,
+                                page_size: this.logPagination.pageSize
+                            }
+                        });
+                        this.stockLogs = response.data.data || [];
+                        this.logPagination.total = response.data.pagination?.total || 0;
+                    } catch (error) {
+                        console.error('加载库存记录失败:', error);
+                    }
+                },
+
+                // 分页处理
+                handlePageChange(page) {
+                    this.componentPagination.page = page;
+                    this.loadComponents();
+                },
+
+                handleSizeChange(size) {
+                    this.componentPagination.pageSize = size;
+                    this.componentPagination.page = 1;
+                    this.loadComponents();
+                },
+
+                handleLogPageChange(page) {
+                    this.logPagination.page = page;
+                    this.loadStockLogs();
+                },
+
+                // 库存等级样式
+                getStockClass(quantity) {
+                    if (quantity >= 50) return 'stock-badge stock-high';
+                    if (quantity >= 10) return 'stock-badge stock-medium';
+                    return 'stock-badge stock-low';
+                },
+
+                // 格式化日期
+                formatDate(dateString) {
+                    if (!dateString) return '-';
+                    const date = new Date(dateString);
+                    const now = new Date();
+                    const diff = now - date;
+                    
+                    // 小于1分钟
+                    if (diff < 60000) return '刚刚';
+                    // 小于1小时
+                    if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
+                    // 小于1天
+                    if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
+                    // 小于7天
+                    if (diff < 604800000) return Math.floor(diff / 86400000) + '天前';
+                    
+                    // 超过7天显示具体日期
+                    return date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                },
+
+                // 加载支持的平台列表
+                async loadSupportedPlatforms() {
+                    try {
+                        const response = await axios.get(this.apiUrl('/platforms'));
+                        this.supportedPlatforms = response.data.data || [];
+                    } catch (error) {
+                        console.error('加载平台列表失败:', error);
+                    }
+                },
+
+                // 从平台解析元件信息
+                async parseFromPlatform() {
+                    if (!this.platformCode) {
+                        this.$message.warning('请输入平台编码');
+                        return;
+                    }
+
+                    this.platformParsing = true;
+                    try {
+                        const response = await axios.post(this.apiUrl('/components/parse'), {
+                            code: this.platformCode
+                        });
+                        
+                        const data = response.data.data;
+                        this.fillComponentForm(data);
+                        
+                        this.$message.success('解析成功！已自动填充元件信息');
+                        this.platformCode = ''; // 清空输入框
+                    } catch (error) {
+                        const msg = error.response?.data?.error || error.message || '解析失败';
+                        this.$message.error(msg);
+                    } finally {
+                        this.platformParsing = false;
+                    }
+                },
+
+                // 填充元件表单（通用方法）
+                fillComponentForm(data, quantity) {
+                    // 自动填充表单
+                    this.componentForm.name = data.name || data.model || '';
+                    this.componentForm.value = data.value || '';
+                    this.componentForm.package = data.package || '';
+                    this.componentForm.description = data.description || '';
+                    this.componentForm.datasheet_url = data.datasheet_url || '';
+                    this.componentForm.image_url = data.image_url || '';
+                    
+                    // 如果提供了数量，设置库存数量
+                    if (quantity && quantity > 0) {
+                        this.componentForm.stock_quantity = quantity;
+                    }
+                    
+                    // 如果有制造商信息，添加到描述中
+                    if (data.manufacturer) {
+                        const mfgInfo = `制造商: ${data.manufacturer}`;
+                        if (this.componentForm.description) {
+                            this.componentForm.description += '\n' + mfgInfo;
+                        } else {
+                            this.componentForm.description = mfgInfo;
+                        }
+                    }
+                    
+                    // 如果有平台链接，添加到描述中
+                    if (data.platform_url) {
+                        const linkInfo = `${data.platform_name}链接: ${data.platform_url}`;
+                        if (this.componentForm.description) {
+                            this.componentForm.description += '\n' + linkInfo;
+                        } else {
+                            this.componentForm.description = linkInfo;
+                        }
+                    }
+                },
+
+                // 打开二维码扫描器
+                openQRScanner() {
+                    this.qrScannerDialogVisible = true;
+                    this.qrScanResult = '';
+                },
+
+                // 开始二维码扫描
+                async startQRScanner() {
+                    try {
+                        if (!this.qrScanner) {
+                            this.qrScanner = new Html5Qrcode("qr-reader");
+                        }
+
+                        this.qrScanning = true;
+                        
+                        // 响应式扫描框配置
+                        const qrboxFunction = (viewfinderWidth, viewfinderHeight) => {
+                            const minEdgePercentage = 0.7; // 70%
+                            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+                            const qrboxSize = Math.floor(minEdge * minEdgePercentage);
+                            return {
+                                width: qrboxSize,
+                                height: qrboxSize
+                            };
+                        };
+                        
+                        await this.qrScanner.start(
+                            { facingMode: "environment" }, // 使用后置摄像头
+                            {
+                                fps: 10,
+                                qrbox: qrboxFunction
+                            },
+                            this.onQRCodeScanned,
+                            this.onQRCodeScanError
+                        );
+                    } catch (err) {
+                        console.error('启动扫描器失败:', err);
+                        
+                        let msg = '无法启动摄像头，请检查权限或尝试上传图片';
+                        
+                        // 检查是否是非安全上下文导致的问题
+                        if (location.protocol !== 'https:' && 
+                            location.hostname !== 'localhost' && 
+                            location.hostname !== '127.0.0.1') {
+                            msg = '⚠️ 摄像头启动失败：浏览器安全策略限制在非 HTTPS 环境下访问摄像头。请使用 localhost 访问或配置 HTTPS，或尝试"上传图片"功能。';
+                        } else if (err.name === 'NotAllowedError') {
+                            msg = '⚠️ 摄像头权限被拒绝，请在浏览器设置中允许访问摄像头。';
+                        } else if (err.name === 'NotFoundError') {
+                            msg = '⚠️ 未检测到摄像头设备。';
+                        }
+                        
+                        this.$message.error({
+                            message: msg,
+                            duration: 5000,
+                            showClose: true
+                        });
+                        this.qrScanning = false;
+                    }
+                },
+
+                // 停止二维码扫描
+                async stopQRScanner() {
+                    if (this.qrScanner && this.qrScanning) {
+                        try {
+                            await this.qrScanner.stop();
+                            this.qrScanning = false;
+                        } catch (err) {
+                            console.error('停止扫描器失败:', err);
+                        }
+                    }
+                },
+
+                // 关闭二维码扫描器
+                async closeQRScanner() {
+                    await this.stopQRScanner();
+                    this.qrScannerDialogVisible = false;
+                    this.qrScanResult = '';
+                },
+
+                // 扫描成功回调
+                async onQRCodeScanned(decodedText, decodedResult) {
+                    this.qrScanResult = decodedText;
+                    await this.stopQRScanner();
+                    
+                    // 解析二维码内容
+                    await this.parseQRCode(decodedText);
+                },
+
+                // 扫描错误回调（静默处理）
+                onQRCodeScanError(error) {
+                    // 扫描过程中的错误可以忽略
+                },
+
+                // 处理上传的二维码图片
+                async handleQRImageUpload(file) {
+                    try {
+                        if (!this.qrScanner) {
+                            this.qrScanner = new Html5Qrcode("qr-reader");
+                        }
+
+                        const result = await this.qrScanner.scanFile(file, true);
+                        this.qrScanResult = result;
+                        await this.parseQRCode(result);
+                    } catch (err) {
+                        console.error('解析图片失败:', err);
+                        this.$message.error('无法识别图片中的二维码');
+                    }
+                    
+                    return false; // 阻止自动上传
+                },
+
+                // 解析二维码内容并获取元件信息
+                async parseQRCode(qrcodeData) {
+                    try {
+                        const response = await axios.post(this.apiUrl('/components/parse-qrcode'), {
+                            qrcode_data: qrcodeData
+                        });
+                        
+                        const data = response.data.data;
+                        const component = data.component;
+                        const quantity = data.quantity || 1;
+                        const qrcodeInfo = data.qrcode_info;
+                        
+                        // 填充表单
+                        this.fillComponentForm(component, quantity);
+                        
+                        // 关闭扫描对话框
+                        this.closeQRScanner();
+                        
+                        // 显示成功消息
+                        this.$message.success(
+                            `解析成功！元件: ${component.name}, 数量: ${quantity}`
+                        );
+                    } catch (error) {
+                        const msg = error.response?.data?.error || error.message || '解析二维码失败';
+                        this.$message.error(msg);
+                    }
+                }
+            }
+        }).use(ElementPlus).mount('#app');
+    </script>
+</body>
+</html>
