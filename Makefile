@@ -3,7 +3,7 @@
 # 变量定义
 BINARY_NAME=hamster-bin
 GO=go
-GOFLAGS=-v
+GOFLAGS=-ldflags="-s -w" -trimpath
 BUILD_DIR=.
 CMD_DIR=cmd/server
 DATA_DIR=data
