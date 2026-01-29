@@ -25,7 +25,7 @@ func main() {
 	parserManager.Register(parser.NewTaobaoParser()) // 注册淘宝解析器（示例）
 
 	// 设置路由
-	r := router.Setup(database.GetDB(), cfg.WebDir, parserManager)
+	r := router.Setup(database.GetDB(), parserManager)
 
 	// 启动服务器
 	addr := ":" + cfg.Port

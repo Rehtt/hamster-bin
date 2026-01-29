@@ -13,7 +13,7 @@ import (
 )
 
 // Setup 设置路由
-func Setup(db *gorm.DB, webDir string, parserManager *parser.ParserManager) *gin.Engine {
+func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 	// 设置为发布模式（生产环境）
 	// gin.SetMode(gin.ReleaseMode)
 

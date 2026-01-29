@@ -6,7 +6,6 @@ import "os"
 type Config struct {
 	Port     string
 	DBPath   string
-	WebDir   string
 	ImageDir string
 	LogLevel string
 }
@@ -16,7 +15,6 @@ func Load() *Config {
 	return &Config{
 		Port:     getEnv("PORT", "8080"),
 		DBPath:   getEnv("DB_PATH", "./data/inventory.db"),
-		WebDir:   getEnv("WEB_DIR", "./web/dist"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		ImageDir: getEnv("IMAGE_DIR", "./data/images"),
 	}
