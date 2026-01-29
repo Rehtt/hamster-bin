@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Frontend Dependencies
+        working-directory: web
+        run: npm install
+
+      - name: Build Frontend
+        run: make build-frontend
+
+      - name: Build Backend Binaries
+        run: make build-all
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Release
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
+            hamster-bin-linux-amd64
+            hamster-bin-windows-amd64.exe
+            hamster-bin-darwin-amd64
+            hamster-bin-darwin-arm64
