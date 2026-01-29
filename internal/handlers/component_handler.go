@@ -316,7 +316,7 @@ func (h *ComponentHandler) GetImage(c *gin.Context) {
 	}
 
 	// 1. 检查本地 AVIF 文件
-	localPath := filepath.Join("storage/images", idStr+".avif")
+	localPath := filepath.Join(config.Load().ImageDir, idStr+".avif")
 	if _, err := os.Stat(localPath); err == nil {
 		c.Header("Cache-Control", "public, max-age=86400") // 缓存一天
 		c.File(localPath)
