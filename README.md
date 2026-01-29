@@ -103,4 +103,4 @@ npm run dev
 欢迎提交 Issue 和 Pull Request！
 
 ## 📄 许可证
-[MIT License](LICENSE) (待添加)
+[MIT License](LICENSE)
