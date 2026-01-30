@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="100" fill="transparent"/>
+  
+  <!-- Hamster Body/Head -->
+  <!-- Head shape peaking up -->
+  <path d="M156 320 Q256 220 356 320 V400 H156 V320 Z" fill="#FDBA74"/>
+  
+  <!-- Ears -->
+  <circle cx="180" cy="290" r="35" fill="#FDBA74"/>
+  <circle cx="332" cy="290" r="35" fill="#FDBA74"/>
+  <circle cx="180" cy="290" r="18" fill="#FFF1F2"/>
+  <circle cx="332" cy="290" r="18" fill="#FFF1F2"/>
+  
+  <!-- Eyes -->
+  <circle cx="210" cy="350" r="12" fill="#1F2937"/>
+  <circle cx="302" cy="350" r="12" fill="#1F2937"/>
+  
+  <!-- Nose area -->
+  <ellipse cx="256" cy="370" rx="25" ry="18" fill="#FFF1F2"/>
+  <path d="M246 368 Q256 378 266 368" stroke="#1F2937" stroke-width="3" fill="none" opacity="0.5"/>
+
+  <!-- Bin Front -->
+  <!-- Trapezoid shape for the bin -->
+  <path d="M80 380 L110 490 H402 L432 380 H80 Z" fill="#3B82F6"/>
+  <!-- Rim of the bin -->
+  <path d="M70 380 H442" stroke="#2563eb" stroke-width="15" stroke-linecap="round"/>
+  
+  <!-- Label on bin -->
+  <rect x="196" y="420" width="120" height="40" rx="4" fill="#F1F5F9"/>
+  <!-- Simulated text lines on label -->
+  <rect x="210" y="430" width="92" height="6" rx="2" fill="#CBD5E1"/>
+  <rect x="210" y="442" width="60" height="6" rx="2" fill="#CBD5E1"/>
+</svg>

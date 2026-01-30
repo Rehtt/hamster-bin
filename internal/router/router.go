@@ -78,7 +78,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 	r.StaticFS("/assets", gin.OnlyFilesFS{FileSystem: http.FS(assets)})
 	// http.FileSystem的一个坑,http.FileServer会自动处理目录下的index.html文件,但如果显式指定index.html就会无限301到./
 	r.StaticFileFS("/", "web/dist/", http.FS(hamsterbin.WebFS))
-	r.StaticFileFS("/vite.svg", "web/dist/assets/vite.svg", http.FS(hamsterbin.WebFS))
+	r.StaticFileFS("/logo.svg", "web/dist/logo.svg", http.FS(hamsterbin.WebFS))
 
 	r.NoRoute(func(c *gin.Context) {
 		// 如果是API请求返回404，否则返回前端页面（SPA路由支持）

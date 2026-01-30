@@ -24,9 +24,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         )}
       >
         <div className="flex items-center justify-between p-4 border-b border-border">
-          <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-            库存管理系统
-          </h1>
+          <div className="flex items-center gap-2">
+            <img src="/logo.svg" alt="Logo" className="h-8 w-8" />
+            <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+              库存管理系统
+            </h1>
+          </div>
           <button onClick={() => setIsSidebarOpen(false)} className="md:hidden">
             <X className="h-6 w-6" />
           </button>
