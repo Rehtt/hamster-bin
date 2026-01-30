@@ -8,6 +8,8 @@ type Config struct {
 	DBPath   string
 	ImageDir string
 	LogLevel string
+	SSLCert  string
+	SSLKey   string
 }
 
 // Load 加载配置（支持环境变量）
@@ -17,6 +19,8 @@ func Load() *Config {
 		DBPath:   getEnv("DB_PATH", "./data/inventory.db"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		ImageDir: getEnv("IMAGE_DIR", "./data/images"),
+		SSLCert:  getEnv("SSL_CERT", ""),
+		SSLKey:   getEnv("SSL_KEY", ""),
 	}
 }
 

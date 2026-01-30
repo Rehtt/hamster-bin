@@ -35,10 +35,14 @@ func main() {
 	fmt.Printf("💾 数据库: %s\n", cfg.DBPath)
 	fmt.Printf("🔌 支持平台: %v\n\n", parserManager.GetAvailableParsers())
 
-	// if err := r.Run(addr); err != nil {
-	// 	log.Fatalf("服务器启动失败: %v", err)
-	// }
-	if err := r.RunTLS(addr, "certs/cert.pem", "certs/key.pem"); err != nil {
-		log.Fatalf("服务器启动失败: %v", err)
+	if cfg.SSLCert != "" && cfg.SSLKey != "" {
+		fmt.Printf("🔒 启用HTTPS服务\n")
+		if err := r.RunTLS(addr, cfg.SSLCert, cfg.SSLKey); err != nil {
+			log.Fatalf("服务器启动失败: %v", err)
+		}
+	} else {
+		if err := r.Run(addr); err != nil {
+			log.Fatalf("服务器启动失败: %v", err)
+		}
 	}
 }
