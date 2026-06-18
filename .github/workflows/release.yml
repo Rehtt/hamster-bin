@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - release
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -27,19 +27,22 @@ jobs:
 
       - name: Install Frontend Dependencies
         working-directory: web
-        run: npm install
+        run: npm ci
 
       - name: Build Frontend
         run: make build-frontend
 
+      - name: Test Backend
+        run: go test . ./cmd/... ./internal/...
+
       - name: Build Backend Binaries
-        run: make build-all
+        run: make build-all VERSION=${{ github.ref_name }}
 
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest Release
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           draft: false
           prerelease: false
           make_latest: true
