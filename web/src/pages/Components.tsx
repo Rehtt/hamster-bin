@@ -62,6 +62,7 @@ export default function Components() {
   // Platform Import
   const [platformCode, setPlatformCode] = useState('');
   const [platformParsing, setPlatformParsing] = useState(false);
+  const [useAIParse, setUseAIParse] = useState(false);
 
   const [isMobile, setIsMobile] = useState(false);
 
@@ -274,7 +275,7 @@ export default function Components() {
     if (!platformCode) return;
     setPlatformParsing(true);
     try {
-      const res = await client.post('/components/parse', { code: platformCode });
+      const res = await client.post('/components/parse', { code: platformCode, use_llm: useAIParse });
       const data = res.data.data;
       setSupplierInput(getSupplierNameFromPlatform(data.platform_name));
       setFormData(prev => ({
@@ -517,6 +518,15 @@ export default function Components() {
                         <Button onClick={parsePlatform} disabled={platformParsing}>{platformParsing ? '解析中...' : '解析'}</Button>
                         <Button variant="outline" onClick={() => setIsScannerOpen(true)}><QrCode className="mr-2 h-4 w-4" /> 扫码</Button>
                     </div>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <input
+                            type="checkbox"
+                            checked={useAIParse}
+                            onChange={e => setUseAIParse(e.target.checked)}
+                            className="h-4 w-4 rounded border-input"
+                        />
+                        AI 解析
+                    </label>
                 </div>
              )}
 

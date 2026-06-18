@@ -19,7 +19,8 @@ func NewParserHandler(manager *parser.ParserManager) *ParserHandler {
 
 // ParseRequest 解析请求
 type ParseRequest struct {
-	Code string `json:"code" binding:"required"` // 平台编码
+	Code   string `json:"code" binding:"required"` // 平台编码
+	UseLLM bool   `json:"use_llm"`                 // 是否使用 LLM 辅助解析
 }
 
 // QRCodeParseRequest 二维码解析请求
@@ -37,7 +38,7 @@ func (h *ParserHandler) ParseComponent(c *gin.Context) {
 	}
 
 	// 调用解析器
-	info, err := h.manager.Parse(req.Code)
+	info, err := h.manager.ParseWithOptions(req.Code, parser.ParseOptions{UseLLM: req.UseLLM})
 	if err != nil {
 		switch err {
 		case parser.ErrNoParsersAvailable:
@@ -51,7 +52,7 @@ func (h *ParserHandler) ParseComponent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": info,
+		"data":    info,
 		"message": "解析成功",
 	})
 }
@@ -61,7 +62,7 @@ func (h *ParserHandler) ParseComponent(c *gin.Context) {
 func (h *ParserHandler) GetSupportedPlatforms(c *gin.Context) {
 	platforms := h.manager.GetAvailableParsers()
 	c.JSON(http.StatusOK, gin.H{
-		"data": platforms,
+		"data":  platforms,
 		"count": len(platforms),
 	})
 }
@@ -86,7 +87,7 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 	info, err := h.manager.Parse(qrData.Code)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "解析元件编码失败: " + err.Error(),
+			"error":       "解析元件编码失败: " + err.Error(),
 			"qrcode_data": qrData,
 		})
 		return
@@ -95,8 +96,8 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 	// 返回元件信息和数量
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"component": info,
-			"quantity": qrData.Quantity,
+			"component":   info,
+			"quantity":    qrData.Quantity,
 			"qrcode_info": qrData,
 		},
 		"message": "解析成功",

@@ -30,6 +30,16 @@ type Parser interface {
 	Parse(code string) (*ComponentInfo, error)
 }
 
+// ParseOptions 解析选项
+type ParseOptions struct {
+	UseLLM bool `json:"use_llm"`
+}
+
+// OptionParser 支持可选解析策略的平台解析器
+type OptionParser interface {
+	ParseWithOptions(code string, options ParseOptions) (*ComponentInfo, error)
+}
+
 // ParserManager 解析器管理器
 type ParserManager struct {
 	parsers []Parser
@@ -60,12 +70,20 @@ func (m *ParserManager) Register(parser Parser) {
 
 // Parse 自动选择合适的解析器进行解析
 func (m *ParserManager) Parse(code string) (*ComponentInfo, error) {
+	return m.ParseWithOptions(code, ParseOptions{})
+}
+
+// ParseWithOptions 自动选择合适的解析器并传入解析选项
+func (m *ParserManager) ParseWithOptions(code string, options ParseOptions) (*ComponentInfo, error) {
 	if len(m.parsers) == 0 {
 		return nil, ErrNoParsersAvailable
 	}
 
 	for _, parser := range m.parsers {
 		if parser.CanParse(code) {
+			if optionParser, ok := parser.(OptionParser); ok {
+				return optionParser.ParseWithOptions(code, options)
+			}
 			return parser.Parse(code)
 		}
 	}
