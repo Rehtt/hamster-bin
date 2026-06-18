@@ -50,6 +50,7 @@ func Init(dbPath string) error {
 func autoMigrate() error {
 	return DB.AutoMigrate(
 		&models.Category{},
+		&models.Supplier{},
 		&models.Component{},
 		&models.StockLog{},
 	)

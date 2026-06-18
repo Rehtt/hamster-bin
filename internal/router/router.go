@@ -24,6 +24,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 
 	// 初始化 Handlers
 	categoryHandler := handlers.NewCategoryHandler(db)
+	supplierHandler := handlers.NewSupplierHandler(db)
 	componentHandler := handlers.NewComponentHandler(db)
 	stockLogHandler := handlers.NewStockLogHandler(db)
 	parserHandler := handlers.NewParserHandler(parserManager)
@@ -39,6 +40,14 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 			categories.POST("", categoryHandler.Create)
 			categories.PUT("/:id", categoryHandler.Update)
 			categories.DELETE("/:id", categoryHandler.Delete)
+		}
+
+		// 供应商管理
+		suppliers := v1.Group("/suppliers")
+		{
+			suppliers.GET("", supplierHandler.GetAll)
+			suppliers.GET("/:id", supplierHandler.GetByID)
+			suppliers.POST("", supplierHandler.Create)
 		}
 
 		// 元件管理

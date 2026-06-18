@@ -26,7 +26,7 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 	var components []models.Component
 	var total int64
 
-	db := r.db.Model(&models.Component{}).Preload("Category")
+	db := r.db.Model(&models.Component{}).Preload("Category").Preload("Supplier")
 
 	// 分类筛选
 	if query.CategoryID != nil {
@@ -36,8 +36,9 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 	// 关键词搜索
 	if query.Keyword != "" {
 		keyword := "%" + query.Keyword + "%"
-		db = db.Where("name LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ?",
-			keyword, keyword, keyword, keyword)
+		db = db.Joins("LEFT JOIN suppliers ON suppliers.id = components.supplier_id").
+			Where("components.name LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ? OR suppliers.name LIKE ?",
+				keyword, keyword, keyword, keyword, keyword)
 	}
 
 	// 计算总数
@@ -56,7 +57,7 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 // GetByID 根据ID获取元件
 func (r *ComponentRepository) GetByID(id uint) (*models.Component, error) {
 	var component models.Component
-	err := r.db.Preload("Category").First(&component, id).Error
+	err := r.db.Preload("Category").Preload("Supplier").First(&component, id).Error
 	return &component, err
 }
 
