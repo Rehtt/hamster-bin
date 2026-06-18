@@ -19,13 +19,22 @@ export default function Categories() {
     try {
       const res = await client.get('/categories');
       setCategories(res.data.data || []);
-    } catch (error) {
+    } catch {
       toast.error('加载分类失败');
     }
   };
 
   useEffect(() => {
-    fetchCategories();
+    const loadCategories = async () => {
+      try {
+        const res = await client.get('/categories');
+        setCategories(res.data.data || []);
+      } catch {
+        toast.error('加载分类失败');
+      }
+    };
+
+    void loadCategories();
   }, []);
 
   const handleSubmit = async () => {
@@ -41,7 +50,7 @@ export default function Categories() {
       }
       setIsModalOpen(false);
       fetchCategories();
-    } catch (error) {
+    } catch {
       toast.error('操作失败');
     }
   };
@@ -52,7 +61,7 @@ export default function Categories() {
       await client.delete(`/categories/${id}`);
       toast.success('删除成功');
       fetchCategories();
-    } catch (error) {
+    } catch {
       toast.error('删除失败');
     }
   };

@@ -14,33 +14,40 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
 
-  const startCamera = async () => {
-    try {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingMode }
-      });
-      setStream(newStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = newStream;
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error('无法访问摄像头');
-      onClose();
-    }
-  };
-
   useEffect(() => {
-    startCamera();
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+    let active = true;
+    let currentStream: MediaStream | null = null;
+
+    const openCamera = async () => {
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facingMode }
+        });
+
+        if (!active) {
+          newStream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        currentStream = newStream;
+        setStream(newStream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = newStream;
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error('无法访问摄像头');
+        onClose();
       }
     };
-  }, [facingMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    void openCamera();
+
+    return () => {
+      active = false;
+      currentStream?.getTracks().forEach(track => track.stop());
+    };
+  }, [facingMode, onClose]);
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {

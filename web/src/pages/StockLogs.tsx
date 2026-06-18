@@ -9,9 +9,9 @@ export default function StockLogs() {
   const [logs, setLogs] = useState<StockLog[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0 });
 
-  const fetchLogs = async (page = 1) => {
+  const fetchLogs = async (page = 1, pageSize = pagination.page_size) => {
     try {
-      const res = await client.get('/stock-logs', { params: { page, page_size: pagination.page_size } });
+      const res = await client.get('/stock-logs', { params: { page, page_size: pageSize } });
       setLogs(res.data.data || []);
       setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0 });
     } catch (error) {
@@ -20,7 +20,17 @@ export default function StockLogs() {
   };
 
   useEffect(() => {
-    fetchLogs();
+    const loadLogs = async () => {
+      try {
+        const res = await client.get('/stock-logs', { params: { page: 1, page_size: pagination.page_size } });
+        setLogs(res.data.data || []);
+        setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0 });
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    void loadLogs();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
