@@ -2,8 +2,10 @@
 
 # 变量定义
 BINARY_NAME=hamster-bin
+VERSION ?= v1.0.0
 GO=go
-GOFLAGS=-ldflags="-s -w" -trimpath
+LDFLAGS=-s -w -X github.com/Rehtt/hamster-bin/internal/version.Version=$(VERSION)
+GOFLAGS=-ldflags="$(LDFLAGS)" -trimpath
 BUILD_DIR=.
 CMD_DIR=cmd/server
 DATA_DIR=data
@@ -80,8 +82,8 @@ info: ## 显示项目信息
 	@echo "$(COLOR_BOLD)项目信息:$(COLOR_RESET)"
 	@echo "  项目名称: 电子元件库存管理系统"
 	@echo "  二进制名: $(BINARY_NAME)"
+	@echo "  项目版本:  $(VERSION)"
 	@echo "  Go 版本:  $$($(GO) version)"
 	@echo "  构建目录: $(BUILD_DIR)"
 	@echo "  数据目录: $(DATA_DIR)"
 	@echo "  Web 目录: $(WEB_DIR)"
-

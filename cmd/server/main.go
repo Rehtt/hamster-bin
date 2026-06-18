@@ -3,15 +3,22 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/Rehtt/hamster-bin/internal/config"
 	"github.com/Rehtt/hamster-bin/internal/database"
 	"github.com/Rehtt/hamster-bin/internal/llm"
 	"github.com/Rehtt/hamster-bin/internal/parser"
 	"github.com/Rehtt/hamster-bin/internal/router"
+	"github.com/Rehtt/hamster-bin/internal/version"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println(version.Version)
+		return
+	}
+
 	// 加载配置
 	cfg := config.Load()
 
@@ -32,6 +39,7 @@ func main() {
 	// 启动服务器
 	addr := ":" + cfg.Port
 	fmt.Printf("\n🚀 电子元件库存管理系统启动成功！\n")
+	fmt.Printf("🏷️  版本: %s\n", version.Version)
 	fmt.Printf("📡 API地址: http://localhost%s/api/v1\n", addr)
 	fmt.Printf("🌐 Web地址: http://localhost%s\n", addr)
 	fmt.Printf("💾 数据库: %s\n", cfg.DBPath)
