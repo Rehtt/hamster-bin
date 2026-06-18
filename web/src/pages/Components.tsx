@@ -11,6 +11,13 @@ import { Label } from '../components/ui/Label';
 import QRScanner from '../components/QRScanner';
 import CameraCapture from '../components/CameraCapture';
 
+type ComponentSearchParams = {
+  page: number;
+  page_size: number;
+  keyword?: string;
+  category_id?: string;
+};
+
 export default function Components() {
   const [components, setComponents] = useState<Component[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -67,14 +74,14 @@ export default function Components() {
   const fetchComponents = async (page = 1) => {
     setLoading(true);
     try {
-      const params: any = { page, page_size: pagination.page_size };
+      const params: ComponentSearchParams = { page, page_size: pagination.page_size };
       if (search) params.keyword = search;
       if (selectedCategory) params.category_id = selectedCategory;
 
       const res = await client.get('/components', { params });
       setComponents(res.data.data || []);
       setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0 });
-    } catch (error) {
+    } catch {
       toast.error('加载元件失败');
     } finally {
       setLoading(false);
@@ -106,7 +113,7 @@ export default function Components() {
       await client.delete(`/components/${id}`);
       toast.success('删除成功');
       fetchComponents(pagination.page);
-    } catch (error) {
+    } catch {
       toast.error('删除失败');
     }
   };
@@ -173,7 +180,7 @@ export default function Components() {
            if (!categoryId) throw new Error('创建分类失败');
            toast.success(`自动创建分类: ${categoryInput}`);
            await fetchCategories(); // Refresh categories
-        } catch (err) {
+        } catch {
            toast.error('自动创建分类失败');
            return;
         }
@@ -205,8 +212,8 @@ export default function Components() {
                  headers: { 'Content-Type': 'multipart/form-data' }
              });
              // toast.success('图片上传成功');
-          } catch (err) {
-             console.error(err);
+          } catch (error) {
+             console.error(error);
              toast.error('图片上传失败');
           }
       }
@@ -235,7 +242,7 @@ export default function Components() {
         image_url: data.image_url,
       }));
       toast.success('解析成功');
-    } catch (error) {
+    } catch {
       toast.error('解析失败');
     } finally {
       setPlatformParsing(false);
@@ -260,7 +267,7 @@ export default function Components() {
       toast.success('库存更新成功');
       setIsStockOpen(false);
       fetchComponents(pagination.page);
-    } catch (error) {
+    } catch {
       toast.error('更新失败');
     }
   };
@@ -272,7 +279,7 @@ export default function Components() {
     try {
       const res = await client.get(`/components/${component.id}/logs`);
       setComponentLogs(res.data.data || []);
-    } catch (error) {
+    } catch {
       toast.error('加载记录失败');
     }
   };
@@ -309,7 +316,7 @@ export default function Components() {
              setFormData(prev => ({ ...prev, stock_quantity: quantity }));
         }
       }
-    } catch (error) {
+    } catch {
       toast.error('二维码解析失败');
     }
   };

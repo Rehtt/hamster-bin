@@ -9,31 +9,21 @@ interface QRScannerProps {
   autoStart?: boolean;
 }
 
-export default function QRScanner({ onScan, onClose: _, autoStart = false }: QRScannerProps) {
+export default function QRScanner({ onScan, autoStart = false }: QRScannerProps) {
   const [isScanning, setIsScanning] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [isMobile, setIsMobile] = useState(false);
 
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-  }, []);
-
-  useEffect(() => {
-    if (autoStart && !isScanning) {
-      startScanning();
+  const stopScanning = async () => {
+    if (scannerRef.current && isScanning) {
+        try {
+            await scannerRef.current.stop();
+            setIsScanning(false);
+        } catch (e) {
+            console.error(e);
+        }
     }
-  }, [autoStart]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    return () => {
-      if (scannerRef.current && isScanning) {
-        scannerRef.current.stop().catch(console.error);
-      }
-    };
-  }, [isScanning]);
+  };
 
   const startScanning = async () => {
     try {
@@ -57,16 +47,30 @@ export default function QRScanner({ onScan, onClose: _, autoStart = false }: QRS
     }
   };
 
-  const stopScanning = async () => {
-    if (scannerRef.current && isScanning) {
-        try {
-            await scannerRef.current.stop();
-            setIsScanning(false);
-        } catch (e) {
-            console.error(e);
-        }
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+  }, []);
+
+  useEffect(() => {
+    if (autoStart && !isScanning) {
+      const startTimer = window.setTimeout(() => {
+        void startScanning();
+      }, 0);
+
+      return () => window.clearTimeout(startTimer);
     }
-  };
+  }, [autoStart]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current && isScanning) {
+        scannerRef.current.stop().catch(console.error);
+      }
+    };
+  }, [isScanning]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -77,7 +81,7 @@ export default function QRScanner({ onScan, onClose: _, autoStart = false }: QRS
         }
         const result = await scannerRef.current.scanFile(file, true);
         onScan(result);
-      } catch (err) {
+      } catch {
         toast.error('无法识别图片中的二维码');
       }
     }
