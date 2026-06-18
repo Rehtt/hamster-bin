@@ -18,6 +18,21 @@ type ComponentSearchParams = {
   category_id?: string;
 };
 
+type ParsedComponentInfo = {
+  name?: string;
+  category_name?: string;
+  model?: string;
+  value?: string;
+  package?: string;
+  platform_code?: string;
+  platform_name?: string;
+  description?: string;
+  manufacturer?: string;
+  datasheet_url?: string;
+  image_url?: string;
+  category?: Category;
+};
+
 export default function Components() {
   const [components, setComponents] = useState<Component[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -71,6 +86,16 @@ export default function Components() {
     if (platformName.includes('立创') || platformName.includes('LCSC')) return '嘉立创';
     return platformName;
   };
+
+  const parsedInfoToFormData = (info: ParsedComponentInfo): Partial<Component> => ({
+    name: info.name || info.model || '',
+    value: info.value || '',
+    package: info.package || '',
+    supplier_part_number: info.platform_code || '',
+    description: info.description || '',
+    datasheet_url: info.datasheet_url || '',
+    image_url: info.image_url || '',
+  });
 
   useEffect(() => {
     const checkMobile = () => {
@@ -276,17 +301,13 @@ export default function Components() {
     setPlatformParsing(true);
     try {
       const res = await client.post('/components/parse', { code: platformCode, use_llm: useAIParse });
-      const data = res.data.data;
+      const data = res.data.data as ParsedComponentInfo;
       setSupplierInput(getSupplierNameFromPlatform(data.platform_name));
+      setCategoryInput(data.category_name || '');
       setFormData(prev => ({
         ...prev,
-        name: data.name || data.model,
-        value: data.value,
-        package: data.package,
-        supplier_part_number: data.platform_code,
-        description: data.description + (data.manufacturer ? `\n制造商: ${data.manufacturer}` : ''),
-        datasheet_url: data.datasheet_url,
-        image_url: data.image_url,
+        ...parsedInfoToFormData(data),
+        description: (data.description || '') + (data.manufacturer ? `\n制造商: ${data.manufacturer}` : ''),
       }));
       toast.success('解析成功');
     } catch {
@@ -336,7 +357,7 @@ export default function Components() {
     setIsScannerOpen(false);
     try {
       const res = await client.post('/components/parse-qrcode', { qrcode_data: data });
-      const { component, quantity } = res.data.data;
+      const { component, quantity } = res.data.data as { component: ParsedComponentInfo; quantity: number };
       
       // If we are in form mode (adding/editing), fill the form
       if (isFormOpen) {
@@ -352,16 +373,19 @@ export default function Components() {
             stock_quantity: quantity > 0 ? quantity : prev.stock_quantity
          }));
          setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
-         if (component.category?.name) {
-             setCategoryInput(component.category.name);
+         if (component.category_name || component.category?.name) {
+             setCategoryInput(component.category_name || component.category?.name || '');
          }
          toast.success('已识别元件信息');
       } else {
         // Just show info
         toast.success(`识别成功: ${component.name}`);
         // Automatically open form for new entry or edit
-        openForm(component);
+        openForm(parsedInfoToFormData(component) as Component);
         setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
+        if (component.category_name || component.category?.name) {
+             setCategoryInput(component.category_name || component.category?.name || '');
+        }
         if (quantity) {
              setFormData(prev => ({ ...prev, stock_quantity: quantity }));
         }

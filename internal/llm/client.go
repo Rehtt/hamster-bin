@@ -12,9 +12,7 @@ import (
 	"time"
 )
 
-var (
-	ErrNotConfigured = errors.New("LLM 未配置，请设置 LLM_BASE_URL、LLM_API_KEY 和 LLM_MODEL")
-)
+var ErrNotConfigured = errors.New("LLM 未配置，请设置 LLM_BASE_URL、LLM_API_KEY 和 LLM_MODEL")
 
 // Client is a minimal OpenAI-compatible chat completions client.
 type Client struct {

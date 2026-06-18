@@ -156,7 +156,7 @@ func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*Componen
 
 	// 解析产品名称
 	name := baseInfo.Find("h1.BaseInfo_component-name__7OSgG").Text()
-	info.Value = strings.TrimSpace(name)
+	info.Name = strings.TrimSpace(name)
 
 	// 解析 dl 列表中的信息
 	baseInfo.Find("dl > div").Each(func(i int, s *goquery.Selection) {
@@ -198,7 +198,7 @@ func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*Componen
 			}
 			switch key {
 			case "商品目录":
-				info.Name = value
+				info.CategoryName = value
 			}
 		})
 	}
@@ -228,10 +228,11 @@ func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pag
 			Content: fmt.Sprintf(`请从嘉立创/LCSC 商品页面文本中解析电子元件信息。
 
 输出 JSON object，只允许包含这些字段：
-name, model, value, package, description, manufacturer, datasheet_url, image_url
+name, category_name, model, value, package, description, manufacturer, datasheet_url, image_url
 
 要求：
-- name 使用商品目录或元件类别，例如 电阻、电容、MCU、连接器；不要把供应商料号当 name。
+- category_name 使用库存系统分类，例如 电阻、电容、MCU、连接器。
+- name 商品名称。
 - model 使用厂家型号。
 - value 使用阻值、容值、芯片型号或关键参数。
 - package 使用封装。
@@ -251,6 +252,7 @@ name, model, value, package, description, manufacturer, datasheet_url, image_url
 
 	var parsed struct {
 		Name         string `json:"name"`
+		CategoryName string `json:"category_name"`
 		Model        string `json:"model"`
 		Value        string `json:"value"`
 		Package      string `json:"package"`
@@ -271,6 +273,7 @@ name, model, value, package, description, manufacturer, datasheet_url, image_url
 	}
 
 	applyString(&info.Name, parsed.Name)
+	applyString(&info.CategoryName, parsed.CategoryName)
 	applyString(&info.Model, parsed.Model)
 	applyString(&info.Value, parsed.Value)
 	applyString(&info.Package, parsed.Package)

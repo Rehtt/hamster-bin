@@ -5,6 +5,7 @@ import "errors"
 // ComponentInfo 从平台解析出的元件信息
 type ComponentInfo struct {
 	Name         string  `json:"name"`          // 元件名称
+	CategoryName string  `json:"category_name"` // 建议分类名称
 	Model        string  `json:"model"`         // 型号
 	Value        string  `json:"value"`         // 参数值
 	Package      string  `json:"package"`       // 封装
