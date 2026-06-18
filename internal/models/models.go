@@ -11,18 +11,28 @@ type Category struct {
 	ParentID *uint  `json:"parent_id,omitempty"` // 父分类ID，支持树形结构
 }
 
+// Supplier 供应商表
+type Supplier struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"not null;uniqueIndex;size:100" json:"name"` // 供应商名称
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // Component 元件表
 type Component struct {
 	ID                 uint      `gorm:"primaryKey" json:"id"`
 	CategoryID         uint      `gorm:"not null;index" json:"category_id"`
 	Category           *Category `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	Name               string    `gorm:"not null;size:200" json:"name"`                  // 元件名称/型号
-	Value              string    `gorm:"size:100" json:"value,omitempty"`                // 参数值(如: 10k, 100nF)
-	Package            string    `gorm:"size:50" json:"package,omitempty"`               // 封装形式
-	SupplierPartNumber string    `gorm:"size:100" json:"supplier_part_number,omitempty"` // 供应商料号
-	Description        string    `gorm:"type:text" json:"description,omitempty"`         // 描述
-	StockQuantity      int       `gorm:"default:0" json:"stock_quantity"`                // 库存数量
-	Location           string    `gorm:"size:100" json:"location,omitempty"`             // 存放位置
+	Name               string    `gorm:"not null;size:200" json:"name"`                   // 元件名称/型号
+	Value              string    `gorm:"size:100" json:"value,omitempty"`                 // 参数值(如: 10k, 100nF)
+	Package            string    `gorm:"size:50" json:"package,omitempty"`                // 封装形式
+	SupplierID         *uint     `gorm:"index" json:"supplier_id,omitempty"`              // 供应商ID
+	Supplier           *Supplier `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"` // 供应商
+	SupplierPartNumber string    `gorm:"size:100" json:"supplier_part_number,omitempty"`  // 供应商料号
+	Description        string    `gorm:"type:text" json:"description,omitempty"`          // 描述
+	StockQuantity      int       `gorm:"default:0" json:"stock_quantity"`                 // 库存数量
+	Location           string    `gorm:"size:100" json:"location,omitempty"`              // 存放位置
 	DatasheetURL       string    `gorm:"size:500" json:"datasheet_url,omitempty"`
 	ImageURL           string    `gorm:"size:500" json:"image_url,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
@@ -46,6 +56,10 @@ func (Category) TableName() string {
 
 func (Component) TableName() string {
 	return "components"
+}
+
+func (Supplier) TableName() string {
+	return "suppliers"
 }
 
 func (StockLog) TableName() string {

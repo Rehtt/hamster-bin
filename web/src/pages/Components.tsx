@@ -3,7 +3,7 @@ import { useRef } from 'react';
 import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Component, type Category, type StockLog, type Pagination } from '../types';
+import { type Component, type Category, type Supplier, type StockLog, type Pagination } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
@@ -21,6 +21,7 @@ type ComponentSearchParams = {
 export default function Components() {
   const [components, setComponents] = useState<Component[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0 });
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -41,6 +42,8 @@ export default function Components() {
   });
   const [categoryInput, setCategoryInput] = useState('');
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [supplierInput, setSupplierInput] = useState('');
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
   
   // Image Upload State
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +64,12 @@ export default function Components() {
   const [platformParsing, setPlatformParsing] = useState(false);
 
   const [isMobile, setIsMobile] = useState(false);
+
+  const getSupplierNameFromPlatform = (platformName?: string) => {
+    if (!platformName) return '';
+    if (platformName.includes('立创') || platformName.includes('LCSC')) return '嘉立创';
+    return platformName;
+  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -97,8 +106,18 @@ export default function Components() {
     }
   };
 
+  const fetchSuppliers = async () => {
+    try {
+      const res = await client.get('/suppliers');
+      setSuppliers(res.data.data || []);
+    } catch {
+      toast.error('加载供应商失败');
+    }
+  };
+
   useEffect(() => {
     fetchCategories();
+    fetchSuppliers();
     fetchComponents();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -134,10 +153,12 @@ export default function Components() {
       }
       setFormData(component);
       setCategoryInput(component.category?.name || '');
+      setSupplierInput(component.supplier?.name || '');
     } else {
       setEditingComponent(null);
       setFormData({ stock_quantity: 0 });
       setCategoryInput('');
+      setSupplierInput('');
       setPreviewUrl('');
     }
     setIsFormOpen(true);
@@ -186,9 +207,32 @@ export default function Components() {
         }
       }
 
+      let supplierId: number | null = null;
+      const supplierName = supplierInput.trim();
+      if (supplierName) {
+        const existingSupplier = suppliers.find(s => s.name.toLowerCase() === supplierName.toLowerCase());
+        if (existingSupplier) {
+          supplierId = existingSupplier.id;
+        } else {
+          try {
+            const res = await client.post('/suppliers', { name: supplierName });
+            supplierId = res.data.data?.id;
+            if (!supplierId) throw new Error('创建供应商失败');
+            toast.success(`自动创建供应商: ${supplierName}`);
+            await fetchSuppliers();
+          } catch {
+            toast.error('自动创建供应商失败');
+            return;
+          }
+        }
+      }
+
       const data = {
         ...formData,
         category_id: Number(categoryId),
+        supplier_id: supplierId,
+        supplier: undefined,
+        category: undefined,
         stock_quantity: Number(formData.stock_quantity)
       };
 
@@ -232,6 +276,7 @@ export default function Components() {
     try {
       const res = await client.post('/components/parse', { code: platformCode });
       const data = res.data.data;
+      setSupplierInput(getSupplierNameFromPlatform(data.platform_name));
       setFormData(prev => ({
         ...prev,
         name: data.name || data.model,
@@ -305,6 +350,7 @@ export default function Components() {
             image_url: component.image_url,
             stock_quantity: quantity > 0 ? quantity : prev.stock_quantity
          }));
+         setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
          if (component.category?.name) {
              setCategoryInput(component.category.name);
          }
@@ -314,6 +360,7 @@ export default function Components() {
         toast.success(`识别成功: ${component.name}`);
         // Automatically open form for new entry or edit
         openForm(component);
+        setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
         if (quantity) {
              setFormData(prev => ({ ...prev, stock_quantity: quantity }));
         }
@@ -342,7 +389,7 @@ export default function Components() {
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 flex gap-2">
           <Input 
-            placeholder="搜索元件、参数或供应商料号..." 
+            placeholder="搜索元件、参数、供应商或料号..." 
             value={search} 
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -368,6 +415,7 @@ export default function Components() {
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">封装</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商料号</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">分类</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">库存</th>
@@ -379,7 +427,7 @@ export default function Components() {
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={11} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={12} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle">
@@ -403,6 +451,7 @@ export default function Components() {
                   <td className="p-4 align-middle font-medium">{component.name}</td>
                   <td className="p-4 align-middle">{component.value}</td>
                   <td className="p-4 align-middle">{component.package}</td>
+                  <td className="p-4 align-middle">{component.supplier?.name || '-'}</td>
                   <td className="p-4 align-middle">{component.supplier_part_number || '-'}</td>
                   <td className="p-4 align-middle">{component.category?.name}</td>
                   <td className="p-4 align-middle">
@@ -523,6 +572,44 @@ export default function Components() {
                 <div className="space-y-2">
                     <Label>封装</Label>
                     <Input value={formData.package || ''} onChange={e => setFormData({...formData, package: e.target.value})} />
+                </div>
+                <div className="space-y-2">
+                    <Label>供应商</Label>
+                    <div className="relative">
+                        <Input 
+                            value={supplierInput}
+                            onChange={e => {
+                                setSupplierInput(e.target.value);
+                                setShowSupplierDropdown(true);
+                            }}
+                            onFocus={() => setShowSupplierDropdown(true)}
+                            onBlur={() => setTimeout(() => setShowSupplierDropdown(false), 200)}
+                            placeholder="例如 嘉立创"
+                        />
+                        {showSupplierDropdown && (
+                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                                {suppliers
+                                    .filter(s => s.name.toLowerCase().includes(supplierInput.toLowerCase()))
+                                    .map(s => (
+                                    <div 
+                                        key={s.id}
+                                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                                        onClick={() => {
+                                            setSupplierInput(s.name);
+                                            setShowSupplierDropdown(false);
+                                        }}
+                                    >
+                                        {s.name}
+                                    </div>
+                                ))}
+                                {suppliers.filter(s => s.name.toLowerCase().includes(supplierInput.toLowerCase())).length === 0 && (
+                                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {supplierInput ? '保存时创建新供应商' : '无匹配供应商'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div className="space-y-2">
                     <Label>供应商料号</Label>

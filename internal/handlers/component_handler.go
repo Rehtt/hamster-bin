@@ -108,6 +108,11 @@ func (h *ComponentHandler) Create(c *gin.Context) {
 		return
 	}
 
+	created, err := h.componentRepo.GetByID(component.ID)
+	if err == nil {
+		component = *created
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": component})
 }
 
@@ -138,10 +143,17 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 
 	// 4. 清除关联对象，防止 GORM 尝试更新关联的分类信息，只更新外键 CategoryID
 	component.Category = nil
+	component.Supplier = nil
 
 	// 5. 保存更新
 	if err := h.componentRepo.Update(component); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新元件失败"})
+		return
+	}
+
+	component, err = h.componentRepo.GetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取更新后元件失败"})
 		return
 	}
 

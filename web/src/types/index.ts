@@ -3,9 +3,15 @@ export interface Category {
   name: string;
 }
 
+export interface Supplier {
+  id: number;
+  name: string;
+}
+
 export interface Component {
   id: number;
   category_id: number;
+  supplier_id?: number | null;
   name: string;
   value: string;
   package: string;
@@ -16,6 +22,7 @@ export interface Component {
   datasheet_url: string;
   image_url: string;
   category?: Category;
+  supplier?: Supplier;
 }
 
 export interface StockLog {
