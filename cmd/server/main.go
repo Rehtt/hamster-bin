@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rehtt/hamster-bin/internal/config"
 	"github.com/Rehtt/hamster-bin/internal/database"
+	"github.com/Rehtt/hamster-bin/internal/llm"
 	"github.com/Rehtt/hamster-bin/internal/parser"
 	"github.com/Rehtt/hamster-bin/internal/router"
 )
@@ -21,8 +22,9 @@ func main() {
 
 	// 初始化解析器管理器
 	parserManager := parser.NewParserManager()
-	parserManager.Register(parser.NewLCSCParser())   // 注册立创商城解析器
-	parserManager.Register(parser.NewTaobaoParser()) // 注册淘宝解析器（示例）
+	llmClient := llm.NewClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
+	parserManager.Register(parser.NewLCSCParser(llmClient)) // 注册立创商城解析器
+	parserManager.Register(parser.NewTaobaoParser())        // 注册淘宝解析器（示例）
 
 	// 设置路由
 	r := router.Setup(database.GetDB(), parserManager)

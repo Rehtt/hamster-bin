@@ -1,26 +1,42 @@
 package parser
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/Rehtt/hamster-bin/internal/llm"
 )
+
+type JSONCompleter interface {
+	CompleteJSON(ctx context.Context, messages []llm.Message) (string, error)
+	Configured() bool
+}
 
 // LCSCParser 立创商城解析器
 type LCSCParser struct {
 	client *http.Client
+	llm    JSONCompleter
 }
 
 // NewLCSCParser 创建立创商城解析器
-func NewLCSCParser() *LCSCParser {
+func NewLCSCParser(llmClient ...JSONCompleter) *LCSCParser {
+	var completer JSONCompleter
+	if len(llmClient) > 0 {
+		completer = llmClient[0]
+	}
+
 	return &LCSCParser{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		llm: completer,
 	}
 }
 
@@ -39,39 +55,93 @@ func (p *LCSCParser) CanParse(code string) bool {
 
 // Parse 解析立创商城编码
 func (p *LCSCParser) Parse(code string) (*ComponentInfo, error) {
+	return p.ParseWithOptions(code, ParseOptions{})
+}
+
+func (p *LCSCParser) ParseWithOptions(code string, options ParseOptions) (*ComponentInfo, error) {
 	code = strings.TrimSpace(code)
 	code = strings.ToUpper(code) // 统一转为大写
 
-	return p.parseByAPI(code)
+	return p.parseByAPI(code, options)
 }
 
 // parseByAPI 通过 API 解析
-func (p *LCSCParser) parseByAPI(code string) (*ComponentInfo, error) {
-	url := fmt.Sprintf("https://www.jlc-smt.com/lcsc/detail/%s.html", code)
+func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*ComponentInfo, error) {
+	parseOptions := ParseOptions{}
+	if len(options) > 0 {
+		parseOptions = options[0]
+	}
+	if parseOptions.UseLLM && (p.llm == nil || !p.llm.Configured()) {
+		return nil, llm.ErrNotConfigured
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	url := fmt.Sprintf("https://www.jlc-smt.com/lcsc/detail/%s.html", code)
+	doc, pageText, err := p.fetchDetailDocument(url)
 	if err != nil {
 		return nil, err
+	}
+
+	info, err := parseLCSCDetailDocument(doc, code, url)
+	if parseOptions.UseLLM {
+		if info == nil {
+			info = &ComponentInfo{
+				PlatformCode: code,
+				PlatformName: "立创商城",
+				PlatformURL:  url,
+			}
+		}
+		if err := p.enrichWithLLM(context.Background(), info, pageText); err != nil {
+			return nil, err
+		}
+		if info.Name == "" {
+			return nil, fmt.Errorf("LLM 未能解析元件名称")
+		}
+		return info, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (p *LCSCParser) fetchDetailDocument(url string) (*goquery.Document, string, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, "", err
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP 状态码: %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("HTTP 状态码: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, "", err
 	}
 
 	// 解析 HTML
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
-		return nil, fmt.Errorf("解析HTML失败: %w", err)
+		return nil, "", fmt.Errorf("解析HTML失败: %w", err)
 	}
 
+	pageText := normalizeWhitespace(doc.Text())
+	if len(pageText) > 12000 {
+		pageText = pageText[:12000]
+	}
+	return doc, pageText, nil
+}
+
+func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*ComponentInfo, error) {
 	// 查找 BaseInfo_component-info__yuOgz 容器
 	baseInfo := doc.Find(".BaseInfo_component-info__yuOgz")
 	if baseInfo.Length() == 0 {
@@ -144,4 +214,74 @@ func (p *LCSCParser) parseByAPI(code string) (*ComponentInfo, error) {
 	}
 
 	return info, nil
+}
+
+func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pageText string) error {
+	initial, _ := json.Marshal(info)
+	result, err := p.llm.CompleteJSON(ctx, []llm.Message{
+		{
+			Role:    "system",
+			Content: "你是电子元件参数解析助手。只输出 JSON object，不要输出 Markdown。字段必须使用英文 snake_case。",
+		},
+		{
+			Role: "user",
+			Content: fmt.Sprintf(`请从嘉立创/LCSC 商品页面文本中解析电子元件信息。
+
+输出 JSON object，只允许包含这些字段：
+name, model, value, package, description, manufacturer, datasheet_url, image_url
+
+要求：
+- name 使用商品目录或元件类别，例如 电阻、电容、MCU、连接器；不要把供应商料号当 name。
+- model 使用厂家型号。
+- value 使用阻值、容值、芯片型号或关键参数。
+- package 使用封装。
+- description 用简短中文汇总其它重要参数。
+- 无法确定的字段输出空字符串。
+
+当前 DOM 初步解析结果：
+%s
+
+页面文本：
+%s`, string(initial), pageText),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	var parsed struct {
+		Name         string `json:"name"`
+		Model        string `json:"model"`
+		Value        string `json:"value"`
+		Package      string `json:"package"`
+		Description  string `json:"description"`
+		Manufacturer string `json:"manufacturer"`
+		DatasheetURL string `json:"datasheet_url"`
+		ImageURL     string `json:"image_url"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return fmt.Errorf("解析 LLM JSON 失败: %w", err)
+	}
+
+	applyString := func(target *string, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			*target = value
+		}
+	}
+
+	applyString(&info.Name, parsed.Name)
+	applyString(&info.Model, parsed.Model)
+	applyString(&info.Value, parsed.Value)
+	applyString(&info.Package, parsed.Package)
+	applyString(&info.Description, parsed.Description)
+	applyString(&info.Manufacturer, parsed.Manufacturer)
+	applyString(&info.DatasheetURL, parsed.DatasheetURL)
+	applyString(&info.ImageURL, parsed.ImageURL)
+
+	return nil
+}
+
+func normalizeWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
