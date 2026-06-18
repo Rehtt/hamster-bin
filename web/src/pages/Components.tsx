@@ -237,6 +237,7 @@ export default function Components() {
         name: data.name || data.model,
         value: data.value,
         package: data.package,
+        supplier_part_number: data.platform_code,
         description: data.description + (data.manufacturer ? `\n制造商: ${data.manufacturer}` : ''),
         datasheet_url: data.datasheet_url,
         image_url: data.image_url,
@@ -298,6 +299,7 @@ export default function Components() {
             name: component.name,
             value: component.value,
             package: component.package,
+            supplier_part_number: component.platform_code,
             description: component.description,
             datasheet_url: component.datasheet_url,
             image_url: component.image_url,
@@ -340,7 +342,7 @@ export default function Components() {
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 flex gap-2">
           <Input 
-            placeholder="搜索元件..." 
+            placeholder="搜索元件、参数或供应商料号..." 
             value={search} 
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -366,6 +368,7 @@ export default function Components() {
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">封装</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商料号</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">分类</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">库存</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">位置</th>
@@ -376,7 +379,7 @@ export default function Components() {
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={10} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={11} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle">
@@ -400,6 +403,7 @@ export default function Components() {
                   <td className="p-4 align-middle font-medium">{component.name}</td>
                   <td className="p-4 align-middle">{component.value}</td>
                   <td className="p-4 align-middle">{component.package}</td>
+                  <td className="p-4 align-middle">{component.supplier_part_number || '-'}</td>
                   <td className="p-4 align-middle">{component.category?.name}</td>
                   <td className="p-4 align-middle">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -519,6 +523,10 @@ export default function Components() {
                 <div className="space-y-2">
                     <Label>封装</Label>
                     <Input value={formData.package || ''} onChange={e => setFormData({...formData, package: e.target.value})} />
+                </div>
+                <div className="space-y-2">
+                    <Label>供应商料号</Label>
+                    <Input value={formData.supplier_part_number || ''} onChange={e => setFormData({...formData, supplier_part_number: e.target.value})} placeholder="例如 C2040" />
                 </div>
                 <div className="space-y-2">
                     <Label>库存数量</Label>

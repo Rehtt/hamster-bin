@@ -9,6 +9,7 @@ export interface Component {
   name: string;
   value: string;
   package: string;
+  supplier_part_number: string;
   description: string;
   stock_quantity: number;
   location: string;

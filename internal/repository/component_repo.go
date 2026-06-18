@@ -36,8 +36,8 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 	// 关键词搜索
 	if query.Keyword != "" {
 		keyword := "%" + query.Keyword + "%"
-		db = db.Where("name LIKE ? OR value LIKE ? OR description LIKE ?",
-			keyword, keyword, keyword)
+		db = db.Where("name LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ?",
+			keyword, keyword, keyword, keyword)
 	}
 
 	// 计算总数

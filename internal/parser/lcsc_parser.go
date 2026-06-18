@@ -103,7 +103,6 @@ func (p *LCSCParser) parseByAPI(code string) (*ComponentInfo, error) {
 			if dd != code {
 				// 可以记录警告，但不一定要中断
 			}
-			info.Description += fmt.Sprintf("商品编号: %s\n", dd)
 		case "商品封装":
 			info.Package = dd
 		case "包装方式":
