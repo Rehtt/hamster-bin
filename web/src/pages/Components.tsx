@@ -101,6 +101,7 @@ export default function Components() {
 
   const parsedInfoToFormData = (info: ParsedComponentInfo): Partial<Component> => ({
     name: info.name || info.model || '',
+    model: info.model || '',
     value: info.value || '',
     package: info.package || '',
     supplier_part_number: info.platform_code || '',
@@ -499,7 +500,7 @@ export default function Components() {
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 flex gap-2">
           <Input 
-            placeholder="搜索编号、元件、参数、供应商或料号..." 
+            placeholder="搜索编号、元件、厂家型号、参数、供应商或料号..." 
             value={search} 
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -543,6 +544,7 @@ export default function Components() {
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">图片</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">编号</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">厂家型号</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">封装</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商</th>
@@ -557,7 +559,7 @@ export default function Components() {
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={14} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={15} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle">
@@ -589,6 +591,7 @@ export default function Components() {
                   </td>
                   <td className="p-4 align-middle font-mono text-xs">{component.component_number || '-'}</td>
                   <td className="p-4 align-middle font-medium">{component.name}</td>
+                  <td className="p-4 align-middle">{component.model || '-'}</td>
                   <td className="p-4 align-middle">{component.value}</td>
                   <td className="p-4 align-middle">{component.package}</td>
                   <td className="p-4 align-middle">{component.supplier?.name || '-'}</td>
@@ -817,6 +820,10 @@ export default function Components() {
                 <div className="space-y-2">
                     <Label>名称</Label>
                     <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                </div>
+                <div className="space-y-2">
+                    <Label>厂家型号</Label>
+                    <Input value={formData.model || ''} onChange={e => setFormData({...formData, model: e.target.value})} placeholder="例如 RC0603FR-0710KL" />
                 </div>
                 <div className="space-y-2">
                     <Label>参数值</Label>
