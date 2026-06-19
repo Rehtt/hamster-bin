@@ -162,8 +162,8 @@ make build
 - 默认端口是 `8080`，由 `PORT` 覆盖。
 - 同时设置 `SSL_CERT` 和 `SSL_KEY` 时，服务使用 HTTPS。
 - LLM 辅助解析使用 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL` 配置。三项均非空时才可用，`LLM_BASE_URL` 应指向 OpenAI-compatible API base，例如 `https://api.openai.com/v1`，实际请求路径为 `{LLM_BASE_URL}/chat/completions`。
-- `POST /api/v1/components/parse` 请求体为 `{ "code": "...", "use_llm": false }`，`use_llm` 可省略且默认 false；仅嘉立创/LCSC 解析器会响应该选项。解析响应可包含 `category_name` 作为建议分类名称，不直接返回数据库 `category_id`。
-- `POST /api/v1/components/parse-qrcode` 请求体为 `{ "qrcode_data": "...", "use_llm": false }`，`use_llm` 可省略且默认 false；二维码解析提取平台编码和数量后，同样通过解析器管理器处理，`use_llm` 行为与 `/components/parse` 一致。
+- `POST /api/v1/components/parse` 请求体为 `{ "code": "...", "use_llm": false }`，`use_llm` 可省略且默认 false；仅嘉立创/LCSC 解析器会响应该选项。解析响应可包含 `category_name` 作为建议分类名称，不直接返回数据库 `category_id`。可预期解析失败不会统一返回 500：`400` 表示编码格式无效或启用 AI 解析但 LLM 未配置，`422` 表示上游页面已获取但内容无法解析，`502` 表示上游 LCSC 请求失败，`503` 表示无可用解析器。
+- `POST /api/v1/components/parse-qrcode` 请求体为 `{ "qrcode_data": "...", "use_llm": false }`，`use_llm` 可省略且默认 false；二维码解析提取平台编码和数量后，同样通过解析器管理器处理，`use_llm` 行为与 `/components/parse` 一致；元件编码解析阶段的错误语义与 `/components/parse` 相同。
 - `PATCH /api/v1/components/batch-location` 请求体为 `{ "ids": [1, 2, 3], "location": "A1-03" }`，用于批量更新选中元件的 `location` 字段；`ids` 必填且至少 1 项，`location` 可为空字符串。
 - `GET /api/v1/components/options` 无请求参数，返回元件录入表单的历史选项；响应示例 `{ "data": { "packages": ["0603", "0805"], "locations": ["A1-03", "B2-01"] } }`，`packages` 和 `locations` 分别从已有元件的 `package`、`location` 字段去重提取（非空、按名称排序）。供应商下拉仍使用 `GET /api/v1/suppliers`。
 - `PATCH /api/v1/components/generate-numbers` 无请求体，用于为数据库中所有 `component_number` 为空的元件按 `id` 顺序自动生成 `HB-xxxxxx` 编号；响应示例 `{ "message": "自动编号完成", "updated": 12 }`。

@@ -94,7 +94,7 @@ func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*Componen
 			return nil, err
 		}
 		if info.Name == "" {
-			return nil, fmt.Errorf("LLM 未能解析元件名称")
+			return nil, fmt.Errorf("LLM 未能解析元件名称: %w", ErrParserContent)
 		}
 		return info, nil
 	}
@@ -108,30 +108,30 @@ func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*Componen
 func (p *LCSCParser) fetchDetailDocument(url string) (*goquery.Document, string, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("创建请求失败: %w: %w", err, ErrParserUpstream)
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("请求上游平台失败: %w: %w", err, ErrParserUpstream)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("HTTP 状态码: %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("HTTP 状态码: %d: %w", resp.StatusCode, ErrParserUpstream)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("读取响应失败: %w: %w", err, ErrParserUpstream)
 	}
 
 	// 解析 HTML
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
-		return nil, "", fmt.Errorf("解析HTML失败: %w", err)
+		return nil, "", fmt.Errorf("解析HTML失败: %w: %w", err, ErrParserContent)
 	}
 
 	pageText := normalizeWhitespace(doc.Text())
@@ -145,7 +145,7 @@ func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*Componen
 	// 查找 BaseInfo_component-info__yuOgz 容器
 	baseInfo := doc.Find(".BaseInfo_component-info__yuOgz")
 	if baseInfo.Length() == 0 {
-		return nil, fmt.Errorf("未找到元件信息容器")
+		return nil, fmt.Errorf("未找到元件信息容器: %w", ErrParserContent)
 	}
 
 	info := &ComponentInfo{
@@ -210,7 +210,7 @@ func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*Componen
 
 	// 如果没有解析到基本信息，返回错误
 	if info.Name == "" {
-		return nil, fmt.Errorf("未能解析元件名称")
+		return nil, fmt.Errorf("未能解析元件名称: %w", ErrParserContent)
 	}
 
 	return info, nil
@@ -247,7 +247,7 @@ name, category_name, model, value, package, description, manufacturer, datasheet
 		},
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("LLM 请求失败: %w: %w", err, ErrParserUpstream)
 	}
 
 	var parsed struct {
@@ -262,7 +262,7 @@ name, category_name, model, value, package, description, manufacturer, datasheet
 		ImageURL     string `json:"image_url"`
 	}
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return fmt.Errorf("解析 LLM JSON 失败: %w", err)
+		return fmt.Errorf("解析 LLM JSON 失败: %w: %w", err, ErrParserContent)
 	}
 
 	applyString := func(target *string, value string) {

@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/Rehtt/hamster-bin/internal/llm"
 	"github.com/Rehtt/hamster-bin/internal/parser"
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +31,24 @@ type QRCodeParseRequest struct {
 	UseLLM     bool   `json:"use_llm"`                        // 是否使用 LLM 辅助解析
 }
 
+// parseErrorResponse 将解析错误映射为 HTTP 状态码和错误消息
+func parseErrorResponse(err error) (int, string) {
+	switch {
+	case errors.Is(err, parser.ErrNoParsersAvailable):
+		return http.StatusServiceUnavailable, "解析服务不可用"
+	case errors.Is(err, parser.ErrNoParserMatched):
+		return http.StatusBadRequest, "无法识别的平台编码格式，请检查编码是否正确"
+	case errors.Is(err, llm.ErrNotConfigured):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, parser.ErrParserUpstream):
+		return http.StatusBadGateway, "上游平台请求失败: " + err.Error()
+	case errors.Is(err, parser.ErrParserContent):
+		return http.StatusUnprocessableEntity, "页面内容解析失败: " + err.Error()
+	default:
+		return http.StatusInternalServerError, "解析失败: " + err.Error()
+	}
+}
+
 // ParseComponent 解析平台编码，返回元件信息
 // @route POST /api/v1/components/parse
 func (h *ParserHandler) ParseComponent(c *gin.Context) {
@@ -41,14 +61,8 @@ func (h *ParserHandler) ParseComponent(c *gin.Context) {
 	// 调用解析器
 	info, err := h.manager.ParseWithOptions(req.Code, parser.ParseOptions{UseLLM: req.UseLLM})
 	if err != nil {
-		switch err {
-		case parser.ErrNoParsersAvailable:
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "解析服务不可用"})
-		case parser.ErrNoParserMatched:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "无法识别的平台编码格式，请检查编码是否正确"})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "解析失败: " + err.Error()})
-		}
+		status, message := parseErrorResponse(err)
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
@@ -87,8 +101,9 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 	// 使用提取的编码调用解析器获取元件信息
 	info, err := h.manager.ParseWithOptions(qrData.Code, parser.ParseOptions{UseLLM: req.UseLLM})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":       "解析元件编码失败: " + err.Error(),
+		status, message := parseErrorResponse(err)
+		c.JSON(status, gin.H{
+			"error":       message,
 			"qrcode_data": qrData,
 		})
 		return

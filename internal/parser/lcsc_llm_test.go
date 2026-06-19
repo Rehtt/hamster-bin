@@ -2,6 +2,7 @@ package parser
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ type fakeCompleter struct {
 func TestLCSCParserUseLLMRequiresConfiguredClient(t *testing.T) {
 	parser := NewLCSCParser()
 	_, err := parser.ParseWithOptions("C123", ParseOptions{UseLLM: true})
-	if err != llm.ErrNotConfigured {
+	if !errors.Is(err, llm.ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
 }

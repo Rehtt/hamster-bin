@@ -409,8 +409,9 @@ export default function Components() {
       const data = res.data.data as ParsedComponentInfo;
       applyParsedComponent(data);
       toast.success('解析成功');
-    } catch {
-      toast.error('解析失败');
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      toast.error(err.response?.data?.error || '解析失败');
     } finally {
       setIsImportParsing(false);
     }
@@ -468,8 +469,9 @@ export default function Components() {
         openForm(parsedInfoToFormData(component) as Component);
         applyParsedComponent(component, quantity);
       }
-    } catch {
-      toast.error('二维码解析失败');
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      toast.error(err.response?.data?.error || '二维码解析失败');
     } finally {
       setIsImportParsing(false);
     }

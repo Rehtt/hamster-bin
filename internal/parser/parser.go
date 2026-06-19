@@ -55,6 +55,12 @@ var (
 
 	// ErrParseFailed 解析失败
 	ErrParseFailed = errors.New("解析平台数据失败")
+
+	// ErrParserUpstream 上游平台请求失败（网络、超时、非 200 等）
+	ErrParserUpstream = errors.New("上游平台请求失败")
+
+	// ErrParserContent 页面已获取但内容无法解析（结构变化、信息不完整等）
+	ErrParserContent = errors.New("页面内容解析失败")
 )
 
 // NewParserManager 创建解析器管理器
