@@ -37,8 +37,8 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 	if query.Keyword != "" {
 		keyword := "%" + query.Keyword + "%"
 		db = db.Joins("LEFT JOIN suppliers ON suppliers.id = components.supplier_id").
-			Where("components.name LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ? OR suppliers.name LIKE ?",
-				keyword, keyword, keyword, keyword, keyword)
+			Where("components.name LIKE ? OR components.component_number LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ? OR suppliers.name LIKE ?",
+				keyword, keyword, keyword, keyword, keyword, keyword)
 	}
 
 	// 计算总数
@@ -89,4 +89,26 @@ func (r *ComponentRepository) BatchUpdateLocation(ids []uint, location string) (
 	}
 	result := r.db.Model(&models.Component{}).Where("id IN ?", ids).Update("location", location)
 	return result.RowsAffected, result.Error
+}
+
+// GetDistinctPackages 获取历史封装列表（去重、非空、按名称排序）
+func (r *ComponentRepository) GetDistinctPackages() ([]string, error) {
+	var packages []string
+	err := r.db.Model(&models.Component{}).
+		Where("package <> ''").
+		Distinct("package").
+		Order("package ASC").
+		Pluck("package", &packages).Error
+	return packages, err
+}
+
+// GetDistinctLocations 获取历史位置列表（去重、非空、按名称排序）
+func (r *ComponentRepository) GetDistinctLocations() ([]string, error) {
+	var locations []string
+	err := r.db.Model(&models.Component{}).
+		Where("location <> ''").
+		Distinct("location").
+		Order("location ASC").
+		Pluck("location", &locations).Error
+	return locations, err
 }

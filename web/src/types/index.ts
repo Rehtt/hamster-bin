@@ -12,6 +12,7 @@ export interface Component {
   id: number;
   category_id: number;
   supplier_id?: number | null;
+  component_number?: string | null;
   name: string;
   value: string;
   package: string;
@@ -50,4 +51,9 @@ export interface ApiResponse<T> {
 export interface Platform {
   code: string;
   name: string;
+}
+
+export interface ComponentOptions {
+  packages: string[];
+  locations: string[];
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"image"
 	"net/http"
 	"os"
@@ -76,6 +77,29 @@ func (h *ComponentHandler) GetAll(c *gin.Context) {
 	})
 }
 
+// GetOptions 获取元件录入表单的历史选项（封装、位置）
+// @route GET /api/v1/components/options
+func (h *ComponentHandler) GetOptions(c *gin.Context) {
+	packages, err := h.componentRepo.GetDistinctPackages()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取封装选项失败"})
+		return
+	}
+
+	locations, err := h.componentRepo.GetDistinctLocations()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取位置选项失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"packages":  packages,
+			"locations": locations,
+		},
+	})
+}
+
 // GetByID 获取单个元件详情
 // @route GET /api/v1/components/:id
 func (h *ComponentHandler) GetByID(c *gin.Context) {
@@ -103,6 +127,15 @@ func (h *ComponentHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if err := h.componentRepo.AssignComponentNumberForCreate(&component); err != nil {
+		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "元件编号已存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "分配元件编号失败"})
+		return
+	}
+
 	if err := h.componentRepo.Create(&component); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建元件失败"})
 		return
@@ -126,11 +159,12 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	}
 
 	// 1. 先获取现有元件信息
-	component, err := h.componentRepo.GetByID(uint(id))
+	existing, err := h.componentRepo.GetByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "元件不存在"})
 		return
 	}
+	component := existing
 
 	// 2. 将请求数据绑定到现有对象上（支持部分更新）
 	if err := c.ShouldBindJSON(component); err != nil {
@@ -144,6 +178,15 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	// 4. 清除关联对象，防止 GORM 尝试更新关联的分类信息，只更新外键 CategoryID
 	component.Category = nil
 	component.Supplier = nil
+
+	if err := h.componentRepo.ValidateComponentNumberForUpdate(component, existing); err != nil {
+		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "元件编号已存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "校验元件编号失败"})
+		return
+	}
 
 	// 5. 保存更新
 	if err := h.componentRepo.Update(component); err != nil {
@@ -182,6 +225,21 @@ func (h *ComponentHandler) BatchUpdateLocation(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "批量更新位置成功",
+		"updated": updated,
+	})
+}
+
+// GenerateMissingNumbers 为所有未编号元件自动生成编号
+// @route PATCH /api/v1/components/generate-numbers
+func (h *ComponentHandler) GenerateMissingNumbers(c *gin.Context) {
+	updated, err := h.componentRepo.GenerateMissingComponentNumbers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "自动编号失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "自动编号完成",
 		"updated": updated,
 	})
 }

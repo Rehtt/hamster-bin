@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useRef } from 'react';
-import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2 } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Component, type Category, type Supplier, type StockLog, type Pagination } from '../types';
+import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
@@ -47,6 +47,7 @@ export default function Components() {
   const [isBatchLocationOpen, setIsBatchLocationOpen] = useState(false);
   const [batchLocation, setBatchLocation] = useState('');
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
+  const [isGeneratingNumbers, setIsGeneratingNumbers] = useState(false);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -65,6 +66,11 @@ export default function Components() {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [supplierInput, setSupplierInput] = useState('');
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
+  const [packageOptions, setPackageOptions] = useState<string[]>([]);
+  const [locationOptions, setLocationOptions] = useState<string[]>([]);
+  const [showPackageDropdown, setShowPackageDropdown] = useState(false);
+  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
+  const [showBatchLocationDropdown, setShowBatchLocationDropdown] = useState(false);
   
   // Image Upload State
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -162,9 +168,21 @@ export default function Components() {
     }
   };
 
+  const fetchComponentOptions = async () => {
+    try {
+      const res = await client.get('/components/options');
+      const options = res.data.data as ComponentOptions;
+      setPackageOptions(options.packages || []);
+      setLocationOptions(options.locations || []);
+    } catch {
+      toast.error('加载历史选项失败');
+    }
+  };
+
   useEffect(() => {
     fetchCategories();
     fetchSuppliers();
+    fetchComponentOptions();
     fetchComponents();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -203,10 +221,26 @@ export default function Components() {
       setIsBatchLocationOpen(false);
       setBatchLocation('');
       fetchComponents(pagination.page, pagination.page_size);
+      fetchComponentOptions();
     } catch {
       toast.error('批量更新位置失败');
     } finally {
       setIsBatchUpdating(false);
+    }
+  };
+
+  const handleGenerateNumbers = async () => {
+    if (!confirm('将为所有未编号的元件自动生成编号，是否继续？')) return;
+    setIsGeneratingNumbers(true);
+    try {
+      const res = await client.patch('/components/generate-numbers');
+      const updated = res.data.updated ?? 0;
+      toast.success(updated > 0 ? `已为 ${updated} 个元件生成编号` : '没有需要编号的元件');
+      fetchComponents(pagination.page, pagination.page_size);
+    } catch {
+      toast.error('自动编号失败');
+    } finally {
+      setIsGeneratingNumbers(false);
     }
   };
 
@@ -320,6 +354,7 @@ export default function Components() {
         supplier_id: supplierId,
         supplier: undefined,
         category: undefined,
+        component_number: formData.component_number?.trim() || undefined,
         stock_quantity: Number(formData.stock_quantity)
       };
 
@@ -351,9 +386,11 @@ export default function Components() {
 
       setIsFormOpen(false);
       fetchComponents(pagination.page, pagination.page_size);
+      fetchComponentOptions();
     } catch (error) {
       console.error(error);
-      toast.error('保存失败');
+      const err = error as { response?: { data?: { error?: string } } };
+      toast.error(err.response?.data?.error || '保存失败');
     }
   };
 
@@ -441,6 +478,18 @@ export default function Components() {
                     <QrCode className="mr-2 h-4 w-4" /> 扫码录入
                 </Button>
             )}
+            <Button variant="outline" onClick={handleGenerateNumbers} disabled={isGeneratingNumbers}>
+              {isGeneratingNumbers ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  编号中...
+                </>
+              ) : (
+                <>
+                  <Hash className="mr-2 h-4 w-4" /> 自动编号
+                </>
+              )}
+            </Button>
             <Button onClick={() => openForm()}>
                 <Plus className="mr-2 h-4 w-4" /> 添加元件
             </Button>
@@ -450,7 +499,7 @@ export default function Components() {
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 flex gap-2">
           <Input 
-            placeholder="搜索元件、参数、供应商或料号..." 
+            placeholder="搜索编号、元件、参数、供应商或料号..." 
             value={search} 
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -492,6 +541,7 @@ export default function Components() {
                   />
                 </th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">图片</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">编号</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">封装</th>
@@ -507,7 +557,7 @@ export default function Components() {
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={13} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={14} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle">
@@ -537,6 +587,7 @@ export default function Components() {
                         />
                     </div>
                   </td>
+                  <td className="p-4 align-middle font-mono text-xs">{component.component_number || '-'}</td>
                   <td className="p-4 align-middle font-medium">{component.name}</td>
                   <td className="p-4 align-middle">{component.value}</td>
                   <td className="p-4 align-middle">{component.package}</td>
@@ -629,12 +680,42 @@ export default function Components() {
           <p className="text-sm text-muted-foreground">将为选中的 {selectedIds.length} 个元件设置相同位置。</p>
           <div className="space-y-2">
             <Label>位置</Label>
-            <Input
-              value={batchLocation}
-              onChange={e => setBatchLocation(e.target.value)}
-              placeholder="例如 A1-03"
-              autoFocus
-            />
+            <div className="relative">
+              <Input
+                value={batchLocation}
+                onChange={e => {
+                  setBatchLocation(e.target.value);
+                  setShowBatchLocationDropdown(true);
+                }}
+                onFocus={() => setShowBatchLocationDropdown(true)}
+                onBlur={() => setTimeout(() => setShowBatchLocationDropdown(false), 200)}
+                placeholder="例如 A1-03"
+                autoFocus
+              />
+              {showBatchLocationDropdown && (
+                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                  {locationOptions
+                    .filter(loc => loc.toLowerCase().includes(batchLocation.toLowerCase()))
+                    .map(loc => (
+                      <div
+                        key={loc}
+                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                        onClick={() => {
+                          setBatchLocation(loc);
+                          setShowBatchLocationDropdown(false);
+                        }}
+                      >
+                        {loc}
+                      </div>
+                    ))}
+                  {locationOptions.filter(loc => loc.toLowerCase().includes(batchLocation.toLowerCase())).length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      {batchLocation ? '无匹配位置' : '无历史位置'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </Modal>
@@ -726,6 +807,14 @@ export default function Components() {
                     </div>
                 </div>
                 <div className="space-y-2">
+                    <Label>元件编号</Label>
+                    <Input
+                      value={formData.component_number || ''}
+                      onChange={e => setFormData({ ...formData, component_number: e.target.value })}
+                      placeholder="留空则保存时自动生成，例如 HB-000001"
+                    />
+                </div>
+                <div className="space-y-2">
                     <Label>名称</Label>
                     <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                 </div>
@@ -735,7 +824,41 @@ export default function Components() {
                 </div>
                 <div className="space-y-2">
                     <Label>封装</Label>
-                    <Input value={formData.package || ''} onChange={e => setFormData({...formData, package: e.target.value})} />
+                    <div className="relative">
+                        <Input
+                            value={formData.package || ''}
+                            onChange={e => {
+                                setFormData({ ...formData, package: e.target.value });
+                                setShowPackageDropdown(true);
+                            }}
+                            onFocus={() => setShowPackageDropdown(true)}
+                            onBlur={() => setTimeout(() => setShowPackageDropdown(false), 200)}
+                            placeholder="例如 0603"
+                        />
+                        {showPackageDropdown && (
+                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                                {packageOptions
+                                    .filter(pkg => pkg.toLowerCase().includes((formData.package || '').toLowerCase()))
+                                    .map(pkg => (
+                                    <div
+                                        key={pkg}
+                                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                                        onClick={() => {
+                                            setFormData({ ...formData, package: pkg });
+                                            setShowPackageDropdown(false);
+                                        }}
+                                    >
+                                        {pkg}
+                                    </div>
+                                ))}
+                                {packageOptions.filter(pkg => pkg.toLowerCase().includes((formData.package || '').toLowerCase())).length === 0 && (
+                                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {(formData.package || '') ? '无匹配封装' : '无历史封装'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div className="space-y-2">
                     <Label>供应商</Label>
@@ -808,7 +931,41 @@ export default function Components() {
                 </div>
                 <div className="space-y-2">
                     <Label>位置</Label>
-                    <Input value={formData.location || ''} onChange={e => setFormData({...formData, location: e.target.value})} />
+                    <div className="relative">
+                        <Input
+                            value={formData.location || ''}
+                            onChange={e => {
+                                setFormData({ ...formData, location: e.target.value });
+                                setShowLocationDropdown(true);
+                            }}
+                            onFocus={() => setShowLocationDropdown(true)}
+                            onBlur={() => setTimeout(() => setShowLocationDropdown(false), 200)}
+                            placeholder="例如 A1-03"
+                        />
+                        {showLocationDropdown && (
+                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                                {locationOptions
+                                    .filter(loc => loc.toLowerCase().includes((formData.location || '').toLowerCase()))
+                                    .map(loc => (
+                                    <div
+                                        key={loc}
+                                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                                        onClick={() => {
+                                            setFormData({ ...formData, location: loc });
+                                            setShowLocationDropdown(false);
+                                        }}
+                                    >
+                                        {loc}
+                                    </div>
+                                ))}
+                                {locationOptions.filter(loc => loc.toLowerCase().includes((formData.location || '').toLowerCase())).length === 0 && (
+                                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {(formData.location || '') ? '无匹配位置' : '无历史位置'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
             <div className="space-y-2">

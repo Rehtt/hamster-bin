@@ -54,7 +54,9 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 		components := v1.Group("/components")
 		{
 			components.GET("", componentHandler.GetAll)
+			components.GET("/options", componentHandler.GetOptions)
 			components.PATCH("/batch-location", componentHandler.BatchUpdateLocation)
+			components.PATCH("/generate-numbers", componentHandler.GenerateMissingNumbers)
 			components.GET("/:id", componentHandler.GetByID)
 			components.POST("", componentHandler.Create)
 			components.PUT("/:id", componentHandler.Update)
