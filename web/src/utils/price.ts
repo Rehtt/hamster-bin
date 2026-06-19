@@ -23,6 +23,12 @@ export function calcUnitPriceCents(totalCents: number, quantity: number): number
   return Math.floor(totalCents / quantity);
 }
 
+/** 按单价与数量计算总价（分） */
+export function calcTotalPriceCents(unitPriceCents: number, quantity: number): number {
+  if (quantity <= 0 || unitPriceCents <= 0) return 0;
+  return unitPriceCents * quantity;
+}
+
 /** 将解析层返回的元单价换算为分 */
 export function parsePriceToCents(priceYuan?: number): number {
   if (priceYuan == null || priceYuan <= 0) return 0;

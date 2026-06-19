@@ -10,7 +10,7 @@ import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
 import QRScanner from '../components/QRScanner';
 import CameraCapture from '../components/CameraCapture';
-import { yuanToCents, formatCents, calcUnitPriceCents } from '../utils/price';
+import { yuanToCents, formatCents, calcUnitPriceCents, calcTotalPriceCents } from '../utils/price';
 
 type ComponentSearchParams = {
   page: number;
@@ -1217,6 +1217,12 @@ export default function Components() {
                 )}
               </div>
             )}
+            {stockForm.type === 'out' && (editingComponent?.unit_price_cents ?? 0) > 0 && stockForm.amount > 0 && (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                <div>参考单价：{formatCents(editingComponent?.unit_price_cents)}</div>
+                <div>预估成本：{formatCents(calcTotalPriceCents(editingComponent!.unit_price_cents!, stockForm.amount))}</div>
+              </div>
+            )}
              <div className="space-y-2">
                 <Label>备注</Label>
                 <Input value={stockForm.reason} onChange={e => setStockForm({...stockForm, reason: e.target.value})} />
@@ -1242,7 +1248,7 @@ export default function Components() {
                      <div className="text-sm text-right">
                        {(log.total_price_cents ?? 0) > 0 && (
                          <div className="text-foreground">
-                           总价 {formatCents(log.total_price_cents)}
+                           {log.change_amount < 0 ? '成本' : '总价'} {formatCents(log.total_price_cents)}
                            {(log.unit_price_cents ?? 0) > 0 && (
                              <span className="text-muted-foreground"> · 单价 {formatCents(log.unit_price_cents)}</span>
                            )}

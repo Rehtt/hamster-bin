@@ -63,7 +63,7 @@ export default function StockLogs() {
                         </div>
                         {(log.total_price_cents ?? 0) > 0 && (
                           <div className="text-sm text-foreground">
-                            总价 {formatCents(log.total_price_cents)}
+                            {log.change_amount < 0 ? '成本' : '总价'} {formatCents(log.total_price_cents)}
                             {(log.unit_price_cents ?? 0) > 0 && (
                               <span className="text-muted-foreground"> · 单价 {formatCents(log.unit_price_cents)}</span>
                             )}

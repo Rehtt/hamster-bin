@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
 )
 
@@ -120,11 +121,19 @@ func (r *ComponentRepository) ApplyStockChange(params StockChangeParams) (*model
 			}
 		}
 
+		logUnitPrice := params.UnitPriceCents
+		logTotalPrice := params.TotalPriceCents
+		if params.Amount < 0 && logUnitPrice == 0 && component.UnitPriceCents > 0 {
+			qty := -params.Amount
+			logUnitPrice = component.UnitPriceCents
+			logTotalPrice = price.TotalPriceCents(component.UnitPriceCents, qty)
+		}
+
 		log := models.StockLog{
 			ComponentID:     params.ComponentID,
 			ChangeAmount:    params.Amount,
-			UnitPriceCents:  params.UnitPriceCents,
-			TotalPriceCents: params.TotalPriceCents,
+			UnitPriceCents:  logUnitPrice,
+			TotalPriceCents: logTotalPrice,
 			Reason:          params.Reason,
 		}
 		if err := tx.Create(&log).Error; err != nil {
