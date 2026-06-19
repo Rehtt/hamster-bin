@@ -102,6 +102,7 @@ export default function Components() {
   const parsedInfoToFormData = (info: ParsedComponentInfo): Partial<Component> => ({
     name: info.name || info.model || '',
     model: info.model || '',
+    manufacturer: info.manufacturer || '',
     value: info.value || '',
     package: info.package || '',
     supplier_part_number: info.platform_code || '',
@@ -118,8 +119,9 @@ export default function Components() {
     }
     setFormData(prev => ({
       ...prev,
-      ...parsedForm,
-      description: (component.description || '') + (component.manufacturer ? `\n制造商: ${component.manufacturer}` : ''),
+      ...Object.fromEntries(
+        Object.entries(parsedForm).filter(([, v]) => v !== '' && v !== undefined)
+      ),
       stock_quantity: quantity && quantity > 0 ? quantity : prev.stock_quantity,
     }));
   };
@@ -395,11 +397,15 @@ export default function Components() {
     }
   };
 
-  const parsePlatform = async () => {
-    if (!platformCode || isImportParsing) return;
+  const parsePlatform = async (code?: string) => {
+    const parseCode = (code ?? platformCode).trim();
+    if (!parseCode || isImportParsing) {
+      if (!parseCode) toast.error('请输入供应商料号');
+      return;
+    }
     setIsImportParsing(true);
     try {
-      const res = await client.post('/components/parse', { code: platformCode, use_llm: useAIParse });
+      const res = await client.post('/components/parse', { code: parseCode, use_llm: useAIParse });
       const data = res.data.data as ParsedComponentInfo;
       applyParsedComponent(data);
       toast.success('解析成功');
@@ -500,7 +506,7 @@ export default function Components() {
       <div className="flex flex-col md:flex-row gap-4">
         <div className="flex-1 flex gap-2">
           <Input 
-            placeholder="搜索编号、元件、厂家型号、参数、供应商或料号..." 
+            placeholder="搜索编号、元件、厂家型号、制造商、参数、供应商或料号..." 
             value={search} 
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -545,6 +551,7 @@ export default function Components() {
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">编号</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">厂家型号</th>
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">制造商</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">封装</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商</th>
@@ -559,7 +566,7 @@ export default function Components() {
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={15} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={16} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle">
@@ -592,6 +599,7 @@ export default function Components() {
                   <td className="p-4 align-middle font-mono text-xs">{component.component_number || '-'}</td>
                   <td className="p-4 align-middle font-medium">{component.name}</td>
                   <td className="p-4 align-middle">{component.model || '-'}</td>
+                  <td className="p-4 align-middle">{component.manufacturer || '-'}</td>
                   <td className="p-4 align-middle">{component.value}</td>
                   <td className="p-4 align-middle">{component.package}</td>
                   <td className="p-4 align-middle">{component.supplier?.name || '-'}</td>
@@ -738,35 +746,49 @@ export default function Components() {
       >
         <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
              {/* Import Tools */}
-             {!editingComponent && (
-                <div className="bg-secondary/20 p-4 rounded-md space-y-4">
-                    <Label>快速导入</Label>
-                    <div className="flex gap-2">
-                        <Input placeholder="输入平台编码 (如 C2040)" value={platformCode} onChange={e => setPlatformCode(e.target.value)} disabled={isImportParsing} />
-                        <Button onClick={parsePlatform} disabled={isImportParsing || !platformCode}>
-                          {isImportParsing ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              解析中...
-                            </>
-                          ) : '解析'}
-                        </Button>
-                        <Button variant="outline" onClick={() => setIsScannerOpen(true)} disabled={isImportParsing}>
-                          <QrCode className="mr-2 h-4 w-4" /> 扫码
-                        </Button>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <input
-                            type="checkbox"
-                            checked={useAIParse}
-                            onChange={e => setUseAIParse(e.target.checked)}
-                            disabled={isImportParsing}
-                            className="h-4 w-4 rounded border-input disabled:opacity-50"
-                        />
-                        AI 解析（平台编码 / 扫码）
-                    </label>
+             <div className="bg-secondary/20 p-4 rounded-md space-y-4">
+                <Label>{editingComponent ? '根据供应商料号更新' : '快速导入'}</Label>
+                <div className="flex gap-2">
+                    <Input
+                      placeholder="输入平台编码 (如 C2040)"
+                      value={editingComponent ? (formData.supplier_part_number || '') : platformCode}
+                      onChange={e => {
+                        if (editingComponent) {
+                          setFormData({ ...formData, supplier_part_number: e.target.value });
+                        } else {
+                          setPlatformCode(e.target.value);
+                        }
+                      }}
+                      disabled={isImportParsing}
+                    />
+                    <Button
+                      onClick={() => parsePlatform(editingComponent ? formData.supplier_part_number : undefined)}
+                      disabled={isImportParsing || !(editingComponent ? formData.supplier_part_number?.trim() : platformCode.trim())}
+                    >
+                      {isImportParsing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          解析中...
+                        </>
+                      ) : editingComponent ? '更新信息' : '解析'}
+                    </Button>
+                    {!editingComponent && (
+                      <Button variant="outline" onClick={() => setIsScannerOpen(true)} disabled={isImportParsing}>
+                        <QrCode className="mr-2 h-4 w-4" /> 扫码
+                      </Button>
+                    )}
                 </div>
-             )}
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <input
+                        type="checkbox"
+                        checked={useAIParse}
+                        onChange={e => setUseAIParse(e.target.checked)}
+                        disabled={isImportParsing}
+                        className="h-4 w-4 rounded border-input disabled:opacity-50"
+                    />
+                    AI 解析（平台编码 / 扫码）
+                </label>
+             </div>
 
             <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -824,6 +846,10 @@ export default function Components() {
                 <div className="space-y-2">
                     <Label>厂家型号</Label>
                     <Input value={formData.model || ''} onChange={e => setFormData({...formData, model: e.target.value})} placeholder="例如 RC0603FR-0710KL" />
+                </div>
+                <div className="space-y-2">
+                    <Label>制造商</Label>
+                    <Input value={formData.manufacturer || ''} onChange={e => setFormData({...formData, manufacturer: e.target.value})} placeholder="例如 YAGEO" />
                 </div>
                 <div className="space-y-2">
                     <Label>参数值</Label>

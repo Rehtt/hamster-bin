@@ -37,8 +37,8 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 	if query.Keyword != "" {
 		keyword := "%" + query.Keyword + "%"
 		db = db.Joins("LEFT JOIN suppliers ON suppliers.id = components.supplier_id").
-			Where("components.name LIKE ? OR components.component_number LIKE ? OR components.model LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ? OR suppliers.name LIKE ?",
-				keyword, keyword, keyword, keyword, keyword, keyword, keyword)
+			Where("components.name LIKE ? OR components.component_number LIKE ? OR components.model LIKE ? OR components.manufacturer LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ? OR suppliers.name LIKE ?",
+				keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword)
 	}
 
 	// 计算总数

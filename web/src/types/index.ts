@@ -15,6 +15,7 @@ export interface Component {
   component_number?: string | null;
   name: string;
   model: string;
+  manufacturer: string;
   value: string;
   package: string;
   supplier_part_number: string;

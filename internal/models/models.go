@@ -27,6 +27,7 @@ type Component struct {
 	ComponentNumber    *string   `gorm:"uniqueIndex;size:50" json:"component_number,omitempty"` // 系统管理的元件编号
 	Name               string    `gorm:"not null;size:200" json:"name"`                         // 元件名称/型号
 	Model              string    `gorm:"size:100" json:"model,omitempty"`                 // 厂家型号
+	Manufacturer       string    `gorm:"size:100" json:"manufacturer,omitempty"`          // 制造商
 	Value              string    `gorm:"size:100" json:"value,omitempty"`                 // 参数值(如: 10k, 100nF)
 	Package            string    `gorm:"size:50" json:"package,omitempty"`                // 封装形式
 	SupplierID         *uint     `gorm:"index" json:"supplier_id,omitempty"`              // 供应商ID
