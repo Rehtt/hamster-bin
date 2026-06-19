@@ -6,6 +6,9 @@ bom-server
 *.so
 *.dylib
 
+# 编译产物
+hamster-bin-*
+
 # 测试和覆盖率文件
 *.test
 *.out
