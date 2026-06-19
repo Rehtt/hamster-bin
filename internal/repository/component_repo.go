@@ -1,9 +1,13 @@
 package repository
 
 import (
+	"errors"
+
 	"github.com/Rehtt/hamster-bin/internal/models"
 	"gorm.io/gorm"
 )
+
+var ErrInsufficientStock = errors.New("库存不足")
 
 type ComponentRepository struct {
 	db *gorm.DB
@@ -80,6 +84,59 @@ func (r *ComponentRepository) Delete(id uint) error {
 func (r *ComponentRepository) UpdateStock(id uint, amount int) error {
 	return r.db.Model(&models.Component{}).Where("id = ?", id).
 		UpdateColumn("stock_quantity", gorm.Expr("stock_quantity + ?", amount)).Error
+}
+
+// StockChangeParams 库存变更参数
+type StockChangeParams struct {
+	ComponentID     uint
+	Amount          int
+	Reason          string
+	UnitPriceCents  int64
+	TotalPriceCents int64
+}
+
+// ApplyStockChange 在事务中更新库存并写入流水，可选更新参考单价
+func (r *ComponentRepository) ApplyStockChange(params StockChangeParams) (*models.Component, error) {
+	var updated models.Component
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var component models.Component
+		if err := tx.First(&component, params.ComponentID).Error; err != nil {
+			return err
+		}
+
+		if component.StockQuantity+params.Amount < 0 {
+			return ErrInsufficientStock
+		}
+
+		if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
+			UpdateColumn("stock_quantity", gorm.Expr("stock_quantity + ?", params.Amount)).Error; err != nil {
+			return err
+		}
+
+		if params.Amount > 0 && params.UnitPriceCents > 0 {
+			if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
+				Update("unit_price_cents", params.UnitPriceCents).Error; err != nil {
+				return err
+			}
+		}
+
+		log := models.StockLog{
+			ComponentID:     params.ComponentID,
+			ChangeAmount:    params.Amount,
+			UnitPriceCents:  params.UnitPriceCents,
+			TotalPriceCents: params.TotalPriceCents,
+			Reason:          params.Reason,
+		}
+		if err := tx.Create(&log).Error; err != nil {
+			return err
+		}
+
+		return tx.Preload("Category").Preload("Supplier").First(&updated, params.ComponentID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 // BatchUpdateLocation 批量更新元件存放位置

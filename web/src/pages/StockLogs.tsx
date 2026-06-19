@@ -4,6 +4,7 @@ import client from '../api/client';
 import { type StockLog, type Pagination } from '../types';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { formatCents } from '../utils/price';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -60,6 +61,14 @@ export default function StockLogs() {
                         <div className={`font-bold text-lg ${log.change_amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
                             {log.change_amount > 0 ? '+' : ''}{log.change_amount}
                         </div>
+                        {(log.total_price_cents ?? 0) > 0 && (
+                          <div className="text-sm text-foreground">
+                            总价 {formatCents(log.total_price_cents)}
+                            {(log.unit_price_cents ?? 0) > 0 && (
+                              <span className="text-muted-foreground"> · 单价 {formatCents(log.unit_price_cents)}</span>
+                            )}
+                          </div>
+                        )}
                         <div className="text-sm text-muted-foreground">{log.reason || '无备注'}</div>
                     </div>
                 </CardContent>

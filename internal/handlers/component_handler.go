@@ -13,6 +13,7 @@ import (
 
 	"github.com/Rehtt/hamster-bin/internal/config"
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/price"
 	"github.com/Rehtt/hamster-bin/internal/repository"
 
 	"github.com/gen2brain/avif"
@@ -121,10 +122,18 @@ func (h *ComponentHandler) GetByID(c *gin.Context) {
 // Create 创建元件
 // @route POST /api/v1/components
 func (h *ComponentHandler) Create(c *gin.Context) {
-	var component models.Component
-	if err := c.ShouldBindJSON(&component); err != nil {
+	var req struct {
+		models.Component
+		TotalPriceCents *int64 `json:"total_price_cents"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
 		return
+	}
+
+	component := req.Component
+	if req.TotalPriceCents != nil && *req.TotalPriceCents > 0 && component.StockQuantity > 0 {
+		component.UnitPriceCents = price.UnitPriceCents(*req.TotalPriceCents, component.StockQuantity)
 	}
 
 	if err := h.componentRepo.AssignComponentNumberForCreate(&component); err != nil {
@@ -139,6 +148,20 @@ func (h *ComponentHandler) Create(c *gin.Context) {
 	if err := h.componentRepo.Create(&component); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建元件失败"})
 		return
+	}
+
+	if component.StockQuantity > 0 && req.TotalPriceCents != nil && *req.TotalPriceCents > 0 {
+		log := models.StockLog{
+			ComponentID:     component.ID,
+			ChangeAmount:    component.StockQuantity,
+			UnitPriceCents:  component.UnitPriceCents,
+			TotalPriceCents: *req.TotalPriceCents,
+			Reason:          "初始入库",
+		}
+		if err := h.stockLogRepo.Create(&log); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建初始库存记录失败"})
+			return
+		}
 	}
 
 	created, err := h.componentRepo.GetByID(component.ID)
@@ -263,7 +286,7 @@ func (h *ComponentHandler) Delete(c *gin.Context) {
 
 // UpdateStock 库存变更（入库/出库）
 // @route POST /api/v1/components/:id/stock
-// Body: {"amount": 10, "reason": "采购"}
+// Body: {"amount": 10, "reason": "采购", "total_price_cents": 1234}
 func (h *ComponentHandler) UpdateStock(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -272,8 +295,9 @@ func (h *ComponentHandler) UpdateStock(c *gin.Context) {
 	}
 
 	var req struct {
-		Amount int    `json:"amount" binding:"required"`
-		Reason string `json:"reason"`
+		Amount          int    `json:"amount" binding:"required"`
+		Reason          string `json:"reason"`
+		TotalPriceCents *int64 `json:"total_price_cents"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -281,39 +305,31 @@ func (h *ComponentHandler) UpdateStock(c *gin.Context) {
 		return
 	}
 
-	// 检查元件是否存在
-	component, err := h.componentRepo.GetByID(uint(id))
+	params := repository.StockChangeParams{
+		ComponentID: uint(id),
+		Amount:      req.Amount,
+		Reason:      req.Reason,
+	}
+
+	if req.Amount > 0 && req.TotalPriceCents != nil && *req.TotalPriceCents > 0 {
+		params.TotalPriceCents = *req.TotalPriceCents
+		params.UnitPriceCents = price.UnitPriceCents(*req.TotalPriceCents, req.Amount)
+	}
+
+	component, err := h.componentRepo.ApplyStockChange(params)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "元件不存在"})
-		return
-	}
-
-	// 检查是否会导致负库存
-	if component.StockQuantity+req.Amount < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "库存不足"})
-		return
-	}
-
-	// 更新库存
-	if err := h.componentRepo.UpdateStock(uint(id), req.Amount); err != nil {
+		if errors.Is(err, repository.ErrInsufficientStock) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "库存不足"})
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "元件不存在"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新库存失败"})
 		return
 	}
 
-	// 记录变更日志
-	log := models.StockLog{
-		ComponentID:  uint(id),
-		ChangeAmount: req.Amount,
-		Reason:       req.Reason,
-	}
-	if err := h.stockLogRepo.Create(&log); err != nil {
-		// 日志记录失败不影响主流程，仅打印警告
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "库存记录失败"})
-		return
-	}
-
-	// 返回更新后的元件信息
-	component, _ = h.componentRepo.GetByID(uint(id))
 	c.JSON(http.StatusOK, gin.H{"data": component, "message": "库存更新成功"})
 }
 

@@ -35,6 +35,7 @@ type Component struct {
 	SupplierPartNumber string    `gorm:"size:100" json:"supplier_part_number,omitempty"`  // 供应商料号
 	Description        string    `gorm:"type:text" json:"description,omitempty"`          // 描述
 	StockQuantity      int       `gorm:"default:0" json:"stock_quantity"`                 // 库存数量
+	UnitPriceCents     int64     `gorm:"default:0" json:"unit_price_cents,omitempty"`     // 参考单价（分）
 	Location           string    `gorm:"size:100" json:"location,omitempty"`              // 存放位置
 	DatasheetURL       string    `gorm:"size:500" json:"datasheet_url,omitempty"`
 	ImageURL           string    `gorm:"size:500" json:"image_url,omitempty"`
@@ -47,8 +48,10 @@ type StockLog struct {
 	ID           uint       `gorm:"primaryKey" json:"id"`
 	ComponentID  uint       `gorm:"not null;index" json:"component_id"`
 	Component    *Component `gorm:"foreignKey:ComponentID" json:"component,omitempty"`
-	ChangeAmount int        `gorm:"not null" json:"change_amount"` // 正数为入库，负数为出库
-	Reason       string     `gorm:"size:500" json:"reason,omitempty"`
+	ChangeAmount     int        `gorm:"not null" json:"change_amount"`                       // 正数为入库，负数为出库
+	UnitPriceCents   int64      `gorm:"default:0" json:"unit_price_cents,omitempty"`         // 分摊单价（分）
+	TotalPriceCents  int64      `gorm:"default:0" json:"total_price_cents,omitempty"`        // 录入总价（分）
+	Reason           string     `gorm:"size:500" json:"reason,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 

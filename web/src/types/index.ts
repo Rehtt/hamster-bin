@@ -21,6 +21,7 @@ export interface Component {
   supplier_part_number: string;
   description: string;
   stock_quantity: number;
+  unit_price_cents?: number;
   location: string;
   datasheet_url: string;
   image_url: string;
@@ -32,6 +33,8 @@ export interface StockLog {
   id: number;
   component_id: number;
   change_amount: number;
+  unit_price_cents?: number;
+  total_price_cents?: number;
   reason: string;
   created_at: string;
   component?: Component;

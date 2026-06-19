@@ -10,6 +10,7 @@ import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
 import QRScanner from '../components/QRScanner';
 import CameraCapture from '../components/CameraCapture';
+import { yuanToCents, formatCents, calcUnitPriceCents } from '../utils/price';
 
 type ComponentSearchParams = {
   page: number;
@@ -30,6 +31,7 @@ type ParsedComponentInfo = {
   platform_name?: string;
   description?: string;
   manufacturer?: string;
+  price?: number;
   datasheet_url?: string;
   image_url?: string;
   category?: Category;
@@ -78,10 +80,11 @@ export default function Components() {
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [showImageMenu, setShowImageMenu] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
+  const [formTotalPriceYuan, setFormTotalPriceYuan] = useState('');
 
 
   // Stock State
-  const [stockForm, setStockForm] = useState({ type: 'in', amount: 1, reason: '' });
+  const [stockForm, setStockForm] = useState({ type: 'in', amount: 1, reason: '', totalPriceYuan: '' });
   
   // Logs State
   const [componentLogs, setComponentLogs] = useState<StockLog[]>([]);
@@ -124,6 +127,10 @@ export default function Components() {
       ),
       stock_quantity: quantity && quantity > 0 ? quantity : prev.stock_quantity,
     }));
+    if (component.price && component.price > 0) {
+      const qty = quantity && quantity > 0 ? quantity : 1;
+      setFormTotalPriceYuan((component.price * qty).toFixed(2));
+    }
   };
 
   useEffect(() => {
@@ -281,6 +288,7 @@ export default function Components() {
     } else {
       setEditingComponent(null);
       setFormData({ stock_quantity: 0 });
+      setFormTotalPriceYuan('');
       setCategoryInput('');
       setSupplierInput('');
       setPreviewUrl('');
@@ -351,7 +359,7 @@ export default function Components() {
         }
       }
 
-      const data = {
+      const data: Record<string, unknown> = {
         ...formData,
         category_id: Number(categoryId),
         supplier_id: supplierId,
@@ -360,6 +368,11 @@ export default function Components() {
         component_number: formData.component_number?.trim() || undefined,
         stock_quantity: Number(formData.stock_quantity)
       };
+
+      const totalPriceCents = yuanToCents(formTotalPriceYuan);
+      if (!editingComponent && Number(formData.stock_quantity) > 0 && totalPriceCents > 0) {
+        data.total_price_cents = totalPriceCents;
+      }
 
       let savedId = editingComponent?.id;
 
@@ -420,7 +433,7 @@ export default function Components() {
   // Stock Handlers
   const openStock = (component: Component) => {
     setEditingComponent(component);
-    setStockForm({ type: 'in', amount: 1, reason: '' });
+    setStockForm({ type: 'in', amount: 1, reason: '', totalPriceYuan: '' });
     setIsStockOpen(true);
   };
 
@@ -428,10 +441,17 @@ export default function Components() {
     if (!editingComponent) return;
     try {
       const amount = stockForm.type === 'in' ? stockForm.amount : -stockForm.amount;
-      await client.post(`/components/${editingComponent.id}/stock`, {
+      const payload: { amount: number; reason: string; total_price_cents?: number } = {
         amount,
         reason: stockForm.reason
-      });
+      };
+      if (stockForm.type === 'in') {
+        const totalPriceCents = yuanToCents(stockForm.totalPriceYuan);
+        if (totalPriceCents > 0) {
+          payload.total_price_cents = totalPriceCents;
+        }
+      }
+      await client.post(`/components/${editingComponent.id}/stock`, payload);
       toast.success('库存更新成功');
       setIsStockOpen(false);
       fetchComponents(pagination.page, pagination.page_size);
@@ -964,6 +984,30 @@ export default function Components() {
                         </Button>
                     </div>
                 </div>
+                {!editingComponent && (
+                  <div className="space-y-2">
+                    <Label>采购总价（元）</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={formTotalPriceYuan}
+                      onChange={e => setFormTotalPriceYuan(e.target.value)}
+                      placeholder="可选，按库存数量分摊单价"
+                    />
+                    {(formData.stock_quantity || 0) > 0 && formTotalPriceYuan && yuanToCents(formTotalPriceYuan) > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        分摊单价：{formatCents(calcUnitPriceCents(yuanToCents(formTotalPriceYuan), formData.stock_quantity || 0))}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {editingComponent && (editingComponent.unit_price_cents ?? 0) > 0 && (
+                  <div className="space-y-2">
+                    <Label>参考单价</Label>
+                    <p className="text-sm text-muted-foreground">{formatCents(editingComponent.unit_price_cents)}</p>
+                  </div>
+                )}
                 <div className="space-y-2">
                     <Label>位置</Label>
                     <div className="relative">
@@ -1155,6 +1199,24 @@ export default function Components() {
                     </Button>
                 </div>
             </div>
+            {stockForm.type === 'in' && (
+              <div className="space-y-2">
+                <Label>采购总价（元）</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={stockForm.totalPriceYuan}
+                  onChange={e => setStockForm({ ...stockForm, totalPriceYuan: e.target.value })}
+                  placeholder="可选，按入库数量分摊单价"
+                />
+                {stockForm.amount > 0 && stockForm.totalPriceYuan && yuanToCents(stockForm.totalPriceYuan) > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    分摊单价：{formatCents(calcUnitPriceCents(yuanToCents(stockForm.totalPriceYuan), stockForm.amount))}
+                  </p>
+                )}
+              </div>
+            )}
              <div className="space-y-2">
                 <Label>备注</Label>
                 <Input value={stockForm.reason} onChange={e => setStockForm({...stockForm, reason: e.target.value})} />
@@ -1177,7 +1239,17 @@ export default function Components() {
                              <div className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</div>
                          </div>
                      </div>
-                     <div className="text-sm text-right text-muted-foreground">{log.reason || '无备注'}</div>
+                     <div className="text-sm text-right">
+                       {(log.total_price_cents ?? 0) > 0 && (
+                         <div className="text-foreground">
+                           总价 {formatCents(log.total_price_cents)}
+                           {(log.unit_price_cents ?? 0) > 0 && (
+                             <span className="text-muted-foreground"> · 单价 {formatCents(log.unit_price_cents)}</span>
+                           )}
+                         </div>
+                       )}
+                       <div className="text-muted-foreground">{log.reason || '无备注'}</div>
+                     </div>
                  </div>
              ))
             }
