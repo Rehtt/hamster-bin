@@ -38,6 +38,7 @@ export interface Pagination {
   page: number;
   page_size: number;
   total: number;
+  total_page?: number;
 }
 
 export interface ApiResponse<T> {

@@ -81,3 +81,12 @@ func (r *ComponentRepository) UpdateStock(id uint, amount int) error {
 	return r.db.Model(&models.Component{}).Where("id = ?", id).
 		UpdateColumn("stock_quantity", gorm.Expr("stock_quantity + ?", amount)).Error
 }
+
+// BatchUpdateLocation 批量更新元件存放位置
+func (r *ComponentRepository) BatchUpdateLocation(ids []uint, location string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.Model(&models.Component{}).Where("id IN ?", ids).Update("location", location)
+	return result.RowsAffected, result.Error
+}

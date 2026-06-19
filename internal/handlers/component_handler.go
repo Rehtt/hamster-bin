@@ -160,6 +160,32 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": component})
 }
 
+// BatchUpdateLocation 批量更新元件存放位置
+// @route PATCH /api/v1/components/batch-location
+// Body: {"ids": [1, 2, 3], "location": "A1-03"}
+func (h *ComponentHandler) BatchUpdateLocation(c *gin.Context) {
+	var req struct {
+		IDs      []uint `json:"ids" binding:"required,min=1"`
+		Location string `json:"location"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+
+	updated, err := h.componentRepo.BatchUpdateLocation(req.IDs, req.Location)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量更新位置失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "批量更新位置成功",
+		"updated": updated,
+	})
+}
+
 // Delete 删除元件
 // @route DELETE /api/v1/components/:id
 func (h *ComponentHandler) Delete(c *gin.Context) {

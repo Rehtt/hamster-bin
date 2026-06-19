@@ -18,6 +18,8 @@ type ComponentSearchParams = {
   category_id?: string;
 };
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
 type ParsedComponentInfo = {
   name?: string;
   category_name?: string;
@@ -37,10 +39,14 @@ export default function Components() {
   const [components, setComponents] = useState<Component[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0 });
+  const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [isBatchLocationOpen, setIsBatchLocationOpen] = useState(false);
+  const [batchLocation, setBatchLocation] = useState('');
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -120,16 +126,17 @@ export default function Components() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const fetchComponents = async (page = 1) => {
+  const fetchComponents = async (page = 1, pageSize = pagination.page_size) => {
     setLoading(true);
     try {
-      const params: ComponentSearchParams = { page, page_size: pagination.page_size };
+      const params: ComponentSearchParams = { page, page_size: pageSize };
       if (search) params.keyword = search;
       if (selectedCategory) params.category_id = selectedCategory;
 
       const res = await client.get('/components', { params });
       setComponents(res.data.data || []);
-      setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0 });
+      setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0, total_page: 0 });
+      setSelectedIds([]);
     } catch {
       toast.error('加载元件失败');
     } finally {
@@ -163,15 +170,55 @@ export default function Components() {
 
   const handleSearch = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
-    fetchComponents(1);
+    fetchComponents(1, pagination.page_size);
   };
+
+  const handlePageSizeChange = (pageSize: number) => {
+    setPagination(prev => ({ ...prev, page: 1, page_size: pageSize }));
+    fetchComponents(1, pageSize);
+  };
+
+  const handlePageChange = (page: number) => {
+    setPagination(prev => ({ ...prev, page }));
+    fetchComponents(page, pagination.page_size);
+  };
+
+  const toggleSelectAll = (checked: boolean) => {
+    setSelectedIds(checked ? components.map(c => c.id) : []);
+  };
+
+  const toggleSelectOne = (id: number, checked: boolean) => {
+    setSelectedIds(prev => checked ? [...prev, id] : prev.filter(item => item !== id));
+  };
+
+  const handleBatchLocationSubmit = async () => {
+    if (selectedIds.length === 0) return;
+    setIsBatchUpdating(true);
+    try {
+      await client.patch('/components/batch-location', {
+        ids: selectedIds,
+        location: batchLocation,
+      });
+      toast.success(`已更新 ${selectedIds.length} 个元件的位置`);
+      setIsBatchLocationOpen(false);
+      setBatchLocation('');
+      fetchComponents(pagination.page, pagination.page_size);
+    } catch {
+      toast.error('批量更新位置失败');
+    } finally {
+      setIsBatchUpdating(false);
+    }
+  };
+
+  const isAllSelected = components.length > 0 && selectedIds.length === components.length;
+  const totalPage = pagination.total_page ?? (pagination.total > 0 ? Math.ceil(pagination.total / pagination.page_size) : 0);
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除此元件吗？')) return;
     try {
       await client.delete(`/components/${id}`);
       toast.success('删除成功');
-      fetchComponents(pagination.page);
+      fetchComponents(pagination.page, pagination.page_size);
     } catch {
       toast.error('删除失败');
     }
@@ -303,7 +350,7 @@ export default function Components() {
       }
 
       setIsFormOpen(false);
-      fetchComponents(pagination.page);
+      fetchComponents(pagination.page, pagination.page_size);
     } catch (error) {
       console.error(error);
       toast.error('保存失败');
@@ -342,7 +389,7 @@ export default function Components() {
       });
       toast.success('库存更新成功');
       setIsStockOpen(false);
-      fetchComponents(pagination.page);
+      fetchComponents(pagination.page, pagination.page_size);
     } catch {
       toast.error('更新失败');
     }
@@ -420,11 +467,30 @@ export default function Components() {
         </select>
       </div>
 
+      {selectedIds.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-md border bg-muted/30 px-4 py-3">
+          <span className="text-sm text-muted-foreground">已选择 {selectedIds.length} 项</span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setSelectedIds([])}>取消选择</Button>
+            <Button onClick={() => setIsBatchLocationOpen(true)}>批量修改位置</Button>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-md border">
         <div className="w-full overflow-auto">
           <table className="w-full caption-bottom text-sm text-left">
             <thead className="[&_tr]:border-b">
               <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap w-10">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={e => toggleSelectAll(e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                    aria-label="全选"
+                  />
+                </th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">图片</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
@@ -441,9 +507,18 @@ export default function Components() {
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={12} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={13} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
+                  <td className="p-4 align-middle">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(component.id)}
+                      onChange={e => toggleSelectOne(component.id, e.target.checked)}
+                      className="h-4 w-4 rounded border-input"
+                      aria-label={`选择 ${component.name}`}
+                    />
+                  </td>
                   <td className="p-4 align-middle">
                     <div 
                         className="w-10 h-10 rounded overflow-hidden bg-secondary/20 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity"
@@ -499,19 +574,70 @@ export default function Components() {
       </div>
       
       {/* Pagination */}
-      <div className="flex justify-end gap-2 items-center">
+      <div className="flex flex-col sm:flex-row justify-between gap-3 items-start sm:items-center">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <span>共 {pagination.total} 条</span>
+          <div className="flex items-center gap-2">
+            <span>每页</span>
+            <select
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              value={pagination.page_size}
+              onChange={e => handlePageSizeChange(Number(e.target.value))}
+            >
+              {PAGE_SIZE_OPTIONS.map(size => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+            <span>条</span>
+          </div>
+        </div>
+        <div className="flex gap-2 items-center">
           <Button 
             variant="outline" 
             disabled={pagination.page <= 1} 
-            onClick={() => { setPagination(p => ({...p, page: p.page - 1})); fetchComponents(pagination.page - 1); }}
+            onClick={() => handlePageChange(pagination.page - 1)}
           >上一页</Button>
-          <span>第 {pagination.page} 页</span>
+          <span>第 {pagination.page} / {Math.max(totalPage, 1)} 页</span>
           <Button 
             variant="outline" 
-            disabled={components.length < pagination.page_size} 
-            onClick={() => { setPagination(p => ({...p, page: p.page + 1})); fetchComponents(pagination.page + 1); }}
+            disabled={totalPage === 0 || pagination.page >= totalPage} 
+            onClick={() => handlePageChange(pagination.page + 1)}
           >下一页</Button>
+        </div>
       </div>
+
+      {/* Batch Location Modal */}
+      <Modal
+        isOpen={isBatchLocationOpen}
+        onClose={() => setIsBatchLocationOpen(false)}
+        title="批量修改位置"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsBatchLocationOpen(false)} disabled={isBatchUpdating}>取消</Button>
+            <Button onClick={handleBatchLocationSubmit} disabled={isBatchUpdating}>
+              {isBatchUpdating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  更新中...
+                </>
+              ) : '确认'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4 py-4">
+          <p className="text-sm text-muted-foreground">将为选中的 {selectedIds.length} 个元件设置相同位置。</p>
+          <div className="space-y-2">
+            <Label>位置</Label>
+            <Input
+              value={batchLocation}
+              onChange={e => setBatchLocation(e.target.value)}
+              placeholder="例如 A1-03"
+              autoFocus
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* Edit/Add Modal */}
       <Modal 

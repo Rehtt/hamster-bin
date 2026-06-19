@@ -5,33 +5,37 @@ import { type StockLog, type Pagination } from '../types';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
 export default function StockLogs() {
   const [logs, setLogs] = useState<StockLog[]>([]);
-  const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0 });
+  const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
 
   const fetchLogs = async (page = 1, pageSize = pagination.page_size) => {
     try {
       const res = await client.get('/stock-logs', { params: { page, page_size: pageSize } });
       setLogs(res.data.data || []);
-      setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0 });
+      setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0, total_page: 0 });
     } catch (error) {
       console.error(error);
     }
   };
 
   useEffect(() => {
-    const loadLogs = async () => {
-      try {
-        const res = await client.get('/stock-logs', { params: { page: 1, page_size: pagination.page_size } });
-        setLogs(res.data.data || []);
-        setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0 });
-      } catch (error) {
-        console.error(error);
-      }
-    };
-
-    void loadLogs();
+    void fetchLogs(1, pagination.page_size);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handlePageSizeChange = (pageSize: number) => {
+    setPagination(prev => ({ ...prev, page: 1, page_size: pageSize }));
+    void fetchLogs(1, pageSize);
+  };
+
+  const handlePageChange = (page: number) => {
+    setPagination(prev => ({ ...prev, page }));
+    void fetchLogs(page, pagination.page_size);
+  };
+
+  const totalPage = pagination.total_page ?? (pagination.total > 0 ? Math.ceil(pagination.total / pagination.page_size) : 0);
 
   return (
     <div className="space-y-6">
@@ -63,18 +67,36 @@ export default function StockLogs() {
         ))}
       </div>
 
-      <div className="flex justify-end gap-2 items-center mt-4">
+      <div className="flex flex-col sm:flex-row justify-between gap-3 items-start sm:items-center mt-4">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <span>共 {pagination.total} 条</span>
+          <div className="flex items-center gap-2">
+            <span>每页</span>
+            <select
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              value={pagination.page_size}
+              onChange={e => handlePageSizeChange(Number(e.target.value))}
+            >
+              {PAGE_SIZE_OPTIONS.map(size => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+            <span>条</span>
+          </div>
+        </div>
+        <div className="flex gap-2 items-center">
           <Button 
             variant="outline" 
             disabled={pagination.page <= 1} 
-            onClick={() => { setPagination(p => ({...p, page: p.page - 1})); fetchLogs(pagination.page - 1); }}
+            onClick={() => handlePageChange(pagination.page - 1)}
           >上一页</Button>
-          <span>第 {pagination.page} 页</span>
+          <span>第 {pagination.page} / {Math.max(totalPage, 1)} 页</span>
           <Button 
             variant="outline" 
-            disabled={logs.length < pagination.page_size} 
-            onClick={() => { setPagination(p => ({...p, page: p.page + 1})); fetchLogs(pagination.page + 1); }}
+            disabled={totalPage === 0 || pagination.page >= totalPage} 
+            onClick={() => handlePageChange(pagination.page + 1)}
           >下一页</Button>
+        </div>
       </div>
     </div>
   );

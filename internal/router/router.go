@@ -54,6 +54,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 		components := v1.Group("/components")
 		{
 			components.GET("", componentHandler.GetAll)
+			components.PATCH("/batch-location", componentHandler.BatchUpdateLocation)
 			components.GET("/:id", componentHandler.GetByID)
 			components.POST("", componentHandler.Create)
 			components.PUT("/:id", componentHandler.Update)
@@ -105,7 +106,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if c.Request.Method == "OPTIONS" {
