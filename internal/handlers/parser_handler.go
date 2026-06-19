@@ -26,6 +26,7 @@ type ParseRequest struct {
 // QRCodeParseRequest 二维码解析请求
 type QRCodeParseRequest struct {
 	QRCodeData string `json:"qrcode_data" binding:"required"` // 二维码原始数据
+	UseLLM     bool   `json:"use_llm"`                        // 是否使用 LLM 辅助解析
 }
 
 // ParseComponent 解析平台编码，返回元件信息
@@ -84,7 +85,7 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 	}
 
 	// 使用提取的编码调用解析器获取元件信息
-	info, err := h.manager.Parse(qrData.Code)
+	info, err := h.manager.ParseWithOptions(qrData.Code, parser.ParseOptions{UseLLM: req.UseLLM})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":       "解析元件编码失败: " + err.Error(),

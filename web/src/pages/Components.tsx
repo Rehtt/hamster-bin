@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRef } from 'react';
-import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination } from '../types';
@@ -76,7 +76,7 @@ export default function Components() {
 
   // Platform Import
   const [platformCode, setPlatformCode] = useState('');
-  const [platformParsing, setPlatformParsing] = useState(false);
+  const [isImportParsing, setIsImportParsing] = useState(false);
   const [useAIParse, setUseAIParse] = useState(false);
 
   const [isMobile, setIsMobile] = useState(false);
@@ -96,6 +96,20 @@ export default function Components() {
     datasheet_url: info.datasheet_url || '',
     image_url: info.image_url || '',
   });
+
+  const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number) => {
+    const parsedForm = parsedInfoToFormData(component);
+    setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
+    if (component.category_name || component.category?.name) {
+      setCategoryInput(component.category_name || component.category?.name || '');
+    }
+    setFormData(prev => ({
+      ...prev,
+      ...parsedForm,
+      description: (component.description || '') + (component.manufacturer ? `\n制造商: ${component.manufacturer}` : ''),
+      stock_quantity: quantity && quantity > 0 ? quantity : prev.stock_quantity,
+    }));
+  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -297,23 +311,17 @@ export default function Components() {
   };
 
   const parsePlatform = async () => {
-    if (!platformCode) return;
-    setPlatformParsing(true);
+    if (!platformCode || isImportParsing) return;
+    setIsImportParsing(true);
     try {
       const res = await client.post('/components/parse', { code: platformCode, use_llm: useAIParse });
       const data = res.data.data as ParsedComponentInfo;
-      setSupplierInput(getSupplierNameFromPlatform(data.platform_name));
-      setCategoryInput(data.category_name || '');
-      setFormData(prev => ({
-        ...prev,
-        ...parsedInfoToFormData(data),
-        description: (data.description || '') + (data.manufacturer ? `\n制造商: ${data.manufacturer}` : ''),
-      }));
+      applyParsedComponent(data);
       toast.success('解析成功');
     } catch {
       toast.error('解析失败');
     } finally {
-      setPlatformParsing(false);
+      setIsImportParsing(false);
     }
   };
 
@@ -354,44 +362,25 @@ export default function Components() {
 
   // QR Handlers
   const handleScan = async (data: string) => {
+    if (isImportParsing) return;
     setIsScannerOpen(false);
+    setIsImportParsing(true);
     try {
-      const res = await client.post('/components/parse-qrcode', { qrcode_data: data });
+      const res = await client.post('/components/parse-qrcode', { qrcode_data: data, use_llm: useAIParse });
       const { component, quantity } = res.data.data as { component: ParsedComponentInfo; quantity: number };
-      
-      // If we are in form mode (adding/editing), fill the form
+
       if (isFormOpen) {
-         setFormData(prev => ({
-            ...prev,
-            name: component.name,
-            value: component.value,
-            package: component.package,
-            supplier_part_number: component.platform_code,
-            description: component.description,
-            datasheet_url: component.datasheet_url,
-            image_url: component.image_url,
-            stock_quantity: quantity > 0 ? quantity : prev.stock_quantity
-         }));
-         setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
-         if (component.category_name || component.category?.name) {
-             setCategoryInput(component.category_name || component.category?.name || '');
-         }
-         toast.success('已识别元件信息');
+        applyParsedComponent(component, quantity);
+        toast.success('已识别元件信息');
       } else {
-        // Just show info
         toast.success(`识别成功: ${component.name}`);
-        // Automatically open form for new entry or edit
         openForm(parsedInfoToFormData(component) as Component);
-        setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
-        if (component.category_name || component.category?.name) {
-             setCategoryInput(component.category_name || component.category?.name || '');
-        }
-        if (quantity) {
-             setFormData(prev => ({ ...prev, stock_quantity: quantity }));
-        }
+        applyParsedComponent(component, quantity);
       }
     } catch {
       toast.error('二维码解析失败');
+    } finally {
+      setIsImportParsing(false);
     }
   };
 
@@ -401,7 +390,7 @@ export default function Components() {
         <h2 className="text-3xl font-bold tracking-tight">元件管理</h2>
         <div className="flex gap-2">
             {isMobile && (
-                <Button onClick={() => setIsScannerOpen(true)} variant="outline">
+                <Button onClick={() => setIsScannerOpen(true)} variant="outline" disabled={isImportParsing}>
                     <QrCode className="mr-2 h-4 w-4" /> 扫码录入
                 </Button>
             )}
@@ -529,7 +518,12 @@ export default function Components() {
         isOpen={isFormOpen} 
         onClose={() => setIsFormOpen(false)} 
         title={editingComponent ? '编辑元件' : '添加元件'}
-        footer={<><Button variant="outline" onClick={() => setIsFormOpen(false)}>取消</Button><Button onClick={handleFormSubmit}>保存</Button></>}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsFormOpen(false)} disabled={isImportParsing && !editingComponent}>取消</Button>
+            <Button onClick={handleFormSubmit} disabled={isImportParsing && !editingComponent}>保存</Button>
+          </>
+        }
         className="max-w-2xl"
       >
         <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
@@ -538,18 +532,28 @@ export default function Components() {
                 <div className="bg-secondary/20 p-4 rounded-md space-y-4">
                     <Label>快速导入</Label>
                     <div className="flex gap-2">
-                        <Input placeholder="输入平台编码 (如 C2040)" value={platformCode} onChange={e => setPlatformCode(e.target.value)} />
-                        <Button onClick={parsePlatform} disabled={platformParsing}>{platformParsing ? '解析中...' : '解析'}</Button>
-                        <Button variant="outline" onClick={() => setIsScannerOpen(true)}><QrCode className="mr-2 h-4 w-4" /> 扫码</Button>
+                        <Input placeholder="输入平台编码 (如 C2040)" value={platformCode} onChange={e => setPlatformCode(e.target.value)} disabled={isImportParsing} />
+                        <Button onClick={parsePlatform} disabled={isImportParsing || !platformCode}>
+                          {isImportParsing ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              解析中...
+                            </>
+                          ) : '解析'}
+                        </Button>
+                        <Button variant="outline" onClick={() => setIsScannerOpen(true)} disabled={isImportParsing}>
+                          <QrCode className="mr-2 h-4 w-4" /> 扫码
+                        </Button>
                     </div>
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
                         <input
                             type="checkbox"
                             checked={useAIParse}
                             onChange={e => setUseAIParse(e.target.checked)}
-                            className="h-4 w-4 rounded border-input"
+                            disabled={isImportParsing}
+                            className="h-4 w-4 rounded border-input disabled:opacity-50"
                         />
-                        AI 解析
+                        AI 解析（平台编码 / 扫码）
                     </label>
                 </div>
              )}
@@ -891,6 +895,17 @@ export default function Components() {
             )}
         </div>
       </Modal>
+
+      {isImportParsing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 rounded-lg border bg-background px-8 py-6 shadow-lg">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            <p className="text-sm font-medium">
+              {useAIParse ? 'AI 解析中，请稍候...' : '正在解析元件信息...'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
