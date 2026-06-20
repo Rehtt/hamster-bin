@@ -2,40 +2,42 @@ package price
 
 import "testing"
 
-func TestUnitPriceCents(t *testing.T) {
+func TestUnitPriceMicro(t *testing.T) {
 	tests := []struct {
 		total    int64
 		quantity int
 		want     int64
 	}{
-		{1000, 10, 100},
-		{1005, 10, 100},
+		{1000, 10, 1000000},   // 10元/10件 = 1元/件 = 1,000,000 微元
+		{1005, 10, 1005000},   // 10.05元/10件
+		{50, 100, 5000},       // 0.5元/100件 = 0.005元/件 = 5000 微元
 		{0, 10, 0},
 		{100, 0, 0},
 	}
 	for _, tt := range tests {
-		got := UnitPriceCents(tt.total, tt.quantity)
+		got := UnitPriceMicro(tt.total, tt.quantity)
 		if got != tt.want {
-			t.Errorf("UnitPriceCents(%d, %d) = %d, want %d", tt.total, tt.quantity, got, tt.want)
+			t.Errorf("UnitPriceMicro(%d, %d) = %d, want %d", tt.total, tt.quantity, got, tt.want)
 		}
 	}
 }
 
-func TestTotalPriceCents(t *testing.T) {
+func TestOutboundTotalCents(t *testing.T) {
 	tests := []struct {
-		unitPrice int64
+		unitMicro int64
 		quantity  int
 		want      int64
 	}{
-		{100, 10, 1000},
+		{1000000, 10, 1000}, // 1元/件 × 10 = 10元 = 1000分
+		{5000, 100, 50},     // 0.005元/件 × 100 = 0.5元 = 50分
 		{0, 10, 0},
-		{100, 0, 0},
-		{-50, 5, 0},
+		{1000000, 0, 0},
+		{-5000, 5, 0},
 	}
 	for _, tt := range tests {
-		got := TotalPriceCents(tt.unitPrice, tt.quantity)
+		got := OutboundTotalCents(tt.unitMicro, tt.quantity)
 		if got != tt.want {
-			t.Errorf("TotalPriceCents(%d, %d) = %d, want %d", tt.unitPrice, tt.quantity, got, tt.want)
+			t.Errorf("OutboundTotalCents(%d, %d) = %d, want %d", tt.unitMicro, tt.quantity, got, tt.want)
 		}
 	}
 }
@@ -49,43 +51,43 @@ func TestYuanToCents(t *testing.T) {
 	}
 }
 
-func TestWeightedAverageUnitPriceCents(t *testing.T) {
+func TestWeightedAverageUnitPriceMicro(t *testing.T) {
 	tests := []struct {
-		name         string
-		oldQty       int
-		oldUnitCents int64
-		inQty        int
-		inTotalCents int64
-		want         int64
+		name          string
+		oldQty        int
+		oldUnitMicro  int64
+		inQty         int
+		inTotalCents  int64
+		want          int64
 	}{
 		{
 			name:         "user example 10@10 + 1@12",
 			oldQty:       10,
-			oldUnitCents: 1000,
+			oldUnitMicro: 10000000, // 10元/件 = 1000分
 			inQty:        1,
-			inTotalCents: 1200,
-			want:         1018,
+			inTotalCents: 1200, // 12元
+			want:         10181818,
 		},
 		{
 			name:         "no history qty uses inbound unit price",
 			oldQty:       0,
-			oldUnitCents: 0,
+			oldUnitMicro: 0,
 			inQty:        5,
 			inTotalCents: 550,
-			want:         110,
+			want:         1100000,
 		},
 		{
 			name:         "no history unit price uses inbound unit price",
 			oldQty:       10,
-			oldUnitCents: 0,
+			oldUnitMicro: 0,
 			inQty:        2,
 			inTotalCents: 240,
-			want:         120,
+			want:         1200000,
 		},
 		{
 			name:         "zero inbound qty",
 			oldQty:       10,
-			oldUnitCents: 1000,
+			oldUnitMicro: 1000000,
 			inQty:        0,
 			inTotalCents: 1200,
 			want:         0,
@@ -93,7 +95,7 @@ func TestWeightedAverageUnitPriceCents(t *testing.T) {
 		{
 			name:         "zero inbound total",
 			oldQty:       10,
-			oldUnitCents: 1000,
+			oldUnitMicro: 1000000,
 			inQty:        1,
 			inTotalCents: 0,
 			want:         0,
@@ -101,44 +103,44 @@ func TestWeightedAverageUnitPriceCents(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := WeightedAverageUnitPriceCents(tt.oldQty, tt.oldUnitCents, tt.inQty, tt.inTotalCents)
+			got := WeightedAverageUnitPriceMicro(tt.oldQty, tt.oldUnitMicro, tt.inQty, tt.inTotalCents)
 			if got != tt.want {
-				t.Errorf("WeightedAverageUnitPriceCents(%d, %d, %d, %d) = %d, want %d",
-					tt.oldQty, tt.oldUnitCents, tt.inQty, tt.inTotalCents, got, tt.want)
+				t.Errorf("WeightedAverageUnitPriceMicro(%d, %d, %d, %d) = %d, want %d",
+					tt.oldQty, tt.oldUnitMicro, tt.inQty, tt.inTotalCents, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestReverseAverageUnitPriceCents(t *testing.T) {
+func TestReverseAverageUnitPriceMicro(t *testing.T) {
 	tests := []struct {
-		name         string
-		curQty       int
-		curUnitCents int64
-		inQty        int
-		inTotalCents int64
-		want         int64
+		name          string
+		curQty        int
+		curUnitMicro  int64
+		inQty         int
+		inTotalCents  int64
+		want          int64
 	}{
 		{
 			name:         "reverse user example with rounding drift",
 			curQty:       11,
-			curUnitCents: 1018,
+			curUnitMicro: 10181818,
 			inQty:        1,
 			inTotalCents: 1200,
-			want:         999,
+			want:         9999999,
 		},
 		{
 			name:         "round trip exact",
 			curQty:       20,
-			curUnitCents: 1100,
+			curUnitMicro: 11000000, // 11元/件
 			inQty:        10,
-			inTotalCents: 12000,
-			want:         1000,
+			inTotalCents: 12000, // 120元
+			want:         10000000, // 10元/件
 		},
 		{
 			name:         "stock cleared after revoke",
 			curQty:       1,
-			curUnitCents: 1200,
+			curUnitMicro: 12000000, // 12元/件
 			inQty:        1,
 			inTotalCents: 1200,
 			want:         0,
@@ -146,26 +148,26 @@ func TestReverseAverageUnitPriceCents(t *testing.T) {
 		{
 			name:         "zero inbound qty keeps current unit price",
 			curQty:       11,
-			curUnitCents: 1010,
+			curUnitMicro: 1010000,
 			inQty:        0,
 			inTotalCents: 1200,
-			want:         1010,
+			want:         1010000,
 		},
 		{
 			name:         "zero inbound total keeps current unit price",
 			curQty:       11,
-			curUnitCents: 1010,
+			curUnitMicro: 1010000,
 			inQty:        1,
 			inTotalCents: 0,
-			want:         1010,
+			want:         1010000,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ReverseAverageUnitPriceCents(tt.curQty, tt.curUnitCents, tt.inQty, tt.inTotalCents)
+			got := ReverseAverageUnitPriceMicro(tt.curQty, tt.curUnitMicro, tt.inQty, tt.inTotalCents)
 			if got != tt.want {
-				t.Errorf("ReverseAverageUnitPriceCents(%d, %d, %d, %d) = %d, want %d",
-					tt.curQty, tt.curUnitCents, tt.inQty, tt.inTotalCents, got, tt.want)
+				t.Errorf("ReverseAverageUnitPriceMicro(%d, %d, %d, %d) = %d, want %d",
+					tt.curQty, tt.curUnitMicro, tt.inQty, tt.inTotalCents, got, tt.want)
 			}
 		})
 	}

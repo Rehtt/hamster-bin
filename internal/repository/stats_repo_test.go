@@ -33,13 +33,13 @@ func seedStatsFixtures(t *testing.T, db *gorm.DB) (uint, uint) {
 		CategoryID:     category.ID,
 		Name:           "电阻A",
 		StockQuantity:  10,
-		UnitPriceCents: 100,
+		UnitPriceMicro: 1000000, // 1元/件
 	}
 	compB := models.Component{
 		CategoryID:     category.ID,
 		Name:           "电阻B",
 		StockQuantity:  5,
-		UnitPriceCents: 200,
+		UnitPriceMicro: 2000000, // 2元/件
 	}
 	if err := db.Create(&compA).Error; err != nil {
 		t.Fatalf("create component A: %v", err)

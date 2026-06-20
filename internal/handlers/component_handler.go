@@ -132,8 +132,8 @@ func componentExportValue(component *models.Component, column string) string {
 	case "stock_quantity":
 		return strconv.Itoa(component.StockQuantity)
 	case "unit_price":
-		if component.UnitPriceCents > 0 {
-			return fmt.Sprintf("%.2f", float64(component.UnitPriceCents)/100)
+		if component.UnitPriceMicro > 0 {
+			return fmt.Sprintf("%.6f", float64(component.UnitPriceMicro)/1e6)
 		}
 		return ""
 	case "location":
@@ -339,7 +339,7 @@ func (h *ComponentHandler) Create(c *gin.Context) {
 
 	component := req.Component
 	if req.TotalPriceCents != nil && *req.TotalPriceCents > 0 && component.StockQuantity > 0 {
-		component.UnitPriceCents = price.UnitPriceCents(*req.TotalPriceCents, component.StockQuantity)
+		component.UnitPriceMicro = price.UnitPriceMicro(*req.TotalPriceCents, component.StockQuantity)
 	}
 
 	if err := h.componentRepo.AssignComponentNumberForCreate(&component); err != nil {
@@ -360,7 +360,7 @@ func (h *ComponentHandler) Create(c *gin.Context) {
 		log := models.StockLog{
 			ComponentID:     component.ID,
 			ChangeAmount:    component.StockQuantity,
-			UnitPriceCents:  component.UnitPriceCents,
+			UnitPriceMicro:  component.UnitPriceMicro,
 			TotalPriceCents: *req.TotalPriceCents,
 			Reason:          "初始入库",
 		}
@@ -411,7 +411,7 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	// 4. 清除关联对象，防止 GORM 尝试更新关联的分类信息，只更新外键 CategoryID
 	component.Category = nil
 	component.Supplier = nil
-	component.UnitPriceCents = existing.UnitPriceCents
+	component.UnitPriceMicro = existing.UnitPriceMicro
 
 	if err := h.componentRepo.ValidateComponentNumberForUpdate(&component, existing); err != nil {
 		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
@@ -466,21 +466,21 @@ func (h *ComponentHandler) BackfillPrice(c *gin.Context) {
 		return
 	}
 
-	batchUnitPrice := price.UnitPriceCents(req.TotalPriceCents, req.Quantity)
+	batchUnitPrice := price.UnitPriceMicro(req.TotalPriceCents, req.Quantity)
 	var newUnitPrice int64
-	if existing.UnitPriceCents == 0 {
+	if existing.UnitPriceMicro == 0 {
 		newUnitPrice = batchUnitPrice
 	} else {
-		newUnitPrice = price.WeightedAverageUnitPriceCents(
+		newUnitPrice = price.WeightedAverageUnitPriceMicro(
 			existing.StockQuantity,
-			existing.UnitPriceCents,
+			existing.UnitPriceMicro,
 			req.Quantity,
 			req.TotalPriceCents,
 		)
 	}
 
 	component := *existing
-	component.UnitPriceCents = newUnitPrice
+	component.UnitPriceMicro = newUnitPrice
 	component.Category = nil
 	component.Supplier = nil
 
@@ -492,7 +492,7 @@ func (h *ComponentHandler) BackfillPrice(c *gin.Context) {
 	log := models.StockLog{
 		ComponentID:     component.ID,
 		ChangeAmount:    0,
-		UnitPriceCents:  batchUnitPrice,
+		UnitPriceMicro:  batchUnitPrice,
 		TotalPriceCents: req.TotalPriceCents,
 		Reason:          fmt.Sprintf("补录价格（采购 %d 件）", req.Quantity),
 	}
@@ -597,7 +597,7 @@ func (h *ComponentHandler) UpdateStock(c *gin.Context) {
 
 	if req.Amount > 0 && req.TotalPriceCents != nil && *req.TotalPriceCents > 0 {
 		params.TotalPriceCents = *req.TotalPriceCents
-		params.UnitPriceCents = price.UnitPriceCents(*req.TotalPriceCents, req.Amount)
+		params.UnitPriceMicro = price.UnitPriceMicro(*req.TotalPriceCents, req.Amount)
 	}
 
 	component, err := h.componentRepo.ApplyStockChange(params)

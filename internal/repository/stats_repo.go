@@ -70,8 +70,8 @@ func (r *StatsRepository) GetDashboardStats(rangeKey string) (*DashboardStats, e
 
 	var valueSum sumResult
 	if err := r.db.Table("components").
-		Select("COALESCE(SUM(stock_quantity * unit_price_cents), 0) AS total").
-		Where("stock_quantity > 0 AND unit_price_cents > 0").
+		Select("COALESCE(SUM(stock_quantity * unit_price_micro), 0) / 10000 AS total").
+		Where("stock_quantity > 0 AND unit_price_micro > 0").
 		Scan(&valueSum).Error; err != nil {
 		return nil, err
 	}

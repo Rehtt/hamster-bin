@@ -90,9 +90,9 @@ func (r *StockLogRepository) RevokeStockLog(id uint) (*models.StockLog, *models.
 			"stock_quantity": gorm.Expr("stock_quantity + ?", reverseAmount),
 		}
 		if original.ChangeAmount > 0 && original.TotalPriceCents > 0 {
-			updates["unit_price_cents"] = price.ReverseAverageUnitPriceCents(
+			updates["unit_price_micro"] = price.ReverseAverageUnitPriceMicro(
 				component.StockQuantity,
-				component.UnitPriceCents,
+				component.UnitPriceMicro,
 				original.ChangeAmount,
 				original.TotalPriceCents,
 			)
@@ -116,7 +116,7 @@ func (r *StockLogRepository) RevokeStockLog(id uint) (*models.StockLog, *models.
 		reversal = models.StockLog{
 			ComponentID:     original.ComponentID,
 			ChangeAmount:    reverseAmount,
-			UnitPriceCents:  original.UnitPriceCents,
+			UnitPriceMicro:  original.UnitPriceMicro,
 			TotalPriceCents: original.TotalPriceCents,
 			Reason:          reason,
 			ReversalOfID:    &original.ID,

@@ -1,19 +1,22 @@
 package price
 
-// UnitPriceCents 将总价按数量整数分摊为单价（分），不能整除时向下取整。
-func UnitPriceCents(totalPriceCents int64, quantity int) int64 {
+// MicroPerCent 1 分 = 10,000 微元（1 元 = 1,000,000 微元 = 100 分）
+const MicroPerCent = 10000
+
+// UnitPriceMicro 将总价（分）按数量分摊为单价（微元），四舍五入。
+func UnitPriceMicro(totalPriceCents int64, quantity int) int64 {
 	if quantity <= 0 || totalPriceCents <= 0 {
 		return 0
 	}
-	return totalPriceCents / int64(quantity)
+	return (totalPriceCents*MicroPerCent + int64(quantity)/2) / int64(quantity)
 }
 
-// TotalPriceCents 将单价（分）按数量计算总价（分）。
-func TotalPriceCents(unitPriceCents int64, quantity int) int64 {
-	if quantity <= 0 || unitPriceCents <= 0 {
+// OutboundTotalCents 将单价（微元）按数量计算出库成本总价（分），四舍五入。
+func OutboundTotalCents(unitPriceMicro int64, quantity int) int64 {
+	if quantity <= 0 || unitPriceMicro <= 0 {
 		return 0
 	}
-	return unitPriceCents * int64(quantity)
+	return (unitPriceMicro*int64(quantity) + MicroPerCent/2) / MicroPerCent
 }
 
 // YuanToCents 将元（浮点）四舍五入换算为分。
@@ -24,33 +27,33 @@ func YuanToCents(yuan float64) int64 {
 	return int64(yuan*100 + 0.5)
 }
 
-// WeightedAverageUnitPriceCents 按库存加权平均计算入库后的参考单价（分）。
+// WeightedAverageUnitPriceMicro 按库存加权平均计算入库后的参考单价（微元）。
 // 无历史库存或历史单价时，直接使用本次入库分摊单价。
-func WeightedAverageUnitPriceCents(oldQty int, oldUnitCents int64, inQty int, inTotalCents int64) int64 {
+func WeightedAverageUnitPriceMicro(oldQty int, oldUnitMicro int64, inQty int, inTotalCents int64) int64 {
 	if inQty <= 0 || inTotalCents <= 0 {
 		return 0
 	}
-	if oldQty <= 0 || oldUnitCents <= 0 {
-		return UnitPriceCents(inTotalCents, inQty)
+	if oldQty <= 0 || oldUnitMicro <= 0 {
+		return UnitPriceMicro(inTotalCents, inQty)
 	}
 	newQty := oldQty + inQty
 	if newQty <= 0 {
 		return 0
 	}
-	totalValue := int64(oldQty)*oldUnitCents + inTotalCents
+	totalValue := int64(oldQty)*oldUnitMicro + inTotalCents*MicroPerCent
 	return totalValue / int64(newQty)
 }
 
-// ReverseAverageUnitPriceCents 撤销入库时，按扣回本次贡献的价值反算回退后的参考单价（分）。
-func ReverseAverageUnitPriceCents(curQty int, curUnitCents int64, inQty int, inTotalCents int64) int64 {
+// ReverseAverageUnitPriceMicro 撤销入库时，按扣回本次贡献的价值反算回退后的参考单价（微元）。
+func ReverseAverageUnitPriceMicro(curQty int, curUnitMicro int64, inQty int, inTotalCents int64) int64 {
 	if inQty <= 0 || inTotalCents <= 0 {
-		return curUnitCents
+		return curUnitMicro
 	}
 	remainQty := curQty - inQty
 	if remainQty <= 0 {
 		return 0
 	}
-	remainValue := int64(curQty)*curUnitCents - inTotalCents
+	remainValue := int64(curQty)*curUnitMicro - inTotalCents*MicroPerCent
 	if remainValue <= 0 {
 		return 0
 	}

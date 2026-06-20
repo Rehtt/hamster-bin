@@ -5,7 +5,7 @@ import client from '../api/client';
 import { type StockLog, type Pagination } from '../types';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { formatCents } from '../utils/price';
+import { formatCents, formatMicro } from '../utils/price';
 import {
   canRevoke,
   isReversal,
@@ -98,8 +98,8 @@ export default function StockLogs() {
                         {(log.total_price_cents ?? 0) > 0 && (
                           <div className="text-sm text-foreground">
                             {log.change_amount < 0 ? '成本' : '总价'} {formatCents(log.total_price_cents)}
-                            {(log.unit_price_cents ?? 0) > 0 && (
-                              <span className="text-muted-foreground"> · 单价 {formatCents(log.unit_price_cents)}</span>
+                            {(log.unit_price_micro ?? 0) > 0 && (
+                              <span className="text-muted-foreground"> · 单价 {formatMicro(log.unit_price_micro)}</span>
                             )}
                           </div>
                         )}

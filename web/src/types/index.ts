@@ -21,7 +21,7 @@ export interface Component {
   supplier_part_number: string;
   description: string;
   stock_quantity: number;
-  unit_price_cents?: number;
+  unit_price_micro?: number;
   location: string;
   datasheet_url: string;
   image_url: string;
@@ -35,7 +35,7 @@ export interface StockLog {
   id: number;
   component_id: number;
   change_amount: number;
-  unit_price_cents?: number;
+  unit_price_micro?: number;
   total_price_cents?: number;
   reason: string;
   revoked_at?: string | null;

@@ -26,7 +26,7 @@ import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
-import { yuanToCents, formatCents, calcUnitPriceCents, calcTotalPriceCents } from '../utils/price';
+import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
 import {
   canRevoke,
   isReversal,
@@ -885,7 +885,7 @@ export default function Components() {
       case 'unit_price':
         return (
           <td className="p-4 align-middle">
-            {component.unit_price_cents != null ? formatCents(component.unit_price_cents) : '-'}
+            {component.unit_price_micro != null ? formatMicro(component.unit_price_micro) : '-'}
           </td>
         );
       case 'location':
@@ -1887,15 +1887,15 @@ export default function Components() {
                     />
                     {(formData.stock_quantity || 0) > 0 && formTotalPriceYuan && yuanToCents(formTotalPriceYuan) > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        分摊单价：{formatCents(calcUnitPriceCents(yuanToCents(formTotalPriceYuan), formData.stock_quantity || 0))}
+                        分摊单价：{formatMicro(calcUnitPriceMicro(yuanToCents(formTotalPriceYuan), formData.stock_quantity || 0))}
                       </p>
                     )}
                   </div>
                 )}
-                {editingComponent && (editingComponent.unit_price_cents ?? 0) > 0 && (
+                {editingComponent && (editingComponent.unit_price_micro ?? 0) > 0 && (
                   <div className="space-y-2">
                     <Label>参考单价</Label>
-                    <p className="text-sm text-muted-foreground">{formatCents(editingComponent.unit_price_cents)}</p>
+                    <p className="text-sm text-muted-foreground">{formatMicro(editingComponent.unit_price_micro)}</p>
                   </div>
                 )}
                 <div className="space-y-2">
@@ -2095,12 +2095,12 @@ export default function Components() {
           </div>
           {backfillForm.quantity > 0 && backfillForm.totalPriceYuan && yuanToCents(backfillForm.totalPriceYuan) > 0 && (
             <p className="text-xs text-muted-foreground">
-              分摊单价：{formatCents(calcUnitPriceCents(yuanToCents(backfillForm.totalPriceYuan), backfillForm.quantity))}
+              分摊单价：{formatMicro(calcUnitPriceMicro(yuanToCents(backfillForm.totalPriceYuan), backfillForm.quantity))}
             </p>
           )}
-          {(backfillTarget?.unit_price_cents ?? 0) > 0 && (
+          {(backfillTarget?.unit_price_micro ?? 0) > 0 && (
             <p className="text-xs text-muted-foreground">
-              当前参考单价：{formatCents(backfillTarget!.unit_price_cents)}，补录后将按加权平均更新
+              当前参考单价：{formatMicro(backfillTarget!.unit_price_micro)}，补录后将按加权平均更新
             </p>
           )}
         </div>
@@ -2167,15 +2167,15 @@ export default function Components() {
                 />
                 {stockForm.amount > 0 && stockForm.totalPriceYuan && yuanToCents(stockForm.totalPriceYuan) > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    分摊单价：{formatCents(calcUnitPriceCents(yuanToCents(stockForm.totalPriceYuan), stockForm.amount))}
+                    分摊单价：{formatMicro(calcUnitPriceMicro(yuanToCents(stockForm.totalPriceYuan), stockForm.amount))}
                   </p>
                 )}
               </div>
             )}
-            {stockForm.type === 'out' && (editingComponent?.unit_price_cents ?? 0) > 0 && stockForm.amount > 0 && (
+            {stockForm.type === 'out' && (editingComponent?.unit_price_micro ?? 0) > 0 && stockForm.amount > 0 && (
               <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                <div>参考单价：{formatCents(editingComponent?.unit_price_cents)}</div>
-                <div>预估成本：{formatCents(calcTotalPriceCents(editingComponent!.unit_price_cents!, stockForm.amount))}</div>
+                <div>参考单价：{formatMicro(editingComponent?.unit_price_micro)}</div>
+                <div>预估成本：{formatCents(calcOutboundCostCents(editingComponent!.unit_price_micro!, stockForm.amount))}</div>
               </div>
             )}
              <div className="space-y-2">
@@ -2215,8 +2215,8 @@ export default function Components() {
                        {(log.total_price_cents ?? 0) > 0 && (
                          <div className="text-foreground">
                            {log.change_amount < 0 ? '成本' : '总价'} {formatCents(log.total_price_cents)}
-                           {(log.unit_price_cents ?? 0) > 0 && (
-                             <span className="text-muted-foreground"> · 单价 {formatCents(log.unit_price_cents)}</span>
+                           {(log.unit_price_micro ?? 0) > 0 && (
+                             <span className="text-muted-foreground"> · 单价 {formatMicro(log.unit_price_micro)}</span>
                            )}
                          </div>
                        )}

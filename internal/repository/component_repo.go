@@ -47,7 +47,7 @@ var ComponentSortColumns = map[string]string{
 	"description":          "components.description",
 	"category":             "categories.name",
 	"stock_quantity":       "components.stock_quantity",
-	"unit_price":           "components.unit_price_cents",
+	"unit_price":           "components.unit_price_micro",
 	"location":             "components.location",
 	"supplier":             "suppliers.name",
 	"supplier_part_number": "components.supplier_part_number",
@@ -183,7 +183,7 @@ type StockChangeParams struct {
 	ComponentID     uint
 	Amount          int
 	Reason          string
-	UnitPriceCents  int64
+	UnitPriceMicro  int64
 	TotalPriceCents int64
 }
 
@@ -206,32 +206,32 @@ func (r *ComponentRepository) ApplyStockChange(params StockChangeParams) (*model
 		}
 
 		if params.Amount > 0 && params.TotalPriceCents > 0 {
-			newUnitPrice := price.WeightedAverageUnitPriceCents(
+			newUnitPrice := price.WeightedAverageUnitPriceMicro(
 				component.StockQuantity,
-				component.UnitPriceCents,
+				component.UnitPriceMicro,
 				params.Amount,
 				params.TotalPriceCents,
 			)
 			if newUnitPrice > 0 {
 				if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
-					Update("unit_price_cents", newUnitPrice).Error; err != nil {
+					Update("unit_price_micro", newUnitPrice).Error; err != nil {
 					return err
 				}
 			}
 		}
 
-		logUnitPrice := params.UnitPriceCents
+		logUnitPrice := params.UnitPriceMicro
 		logTotalPrice := params.TotalPriceCents
-		if params.Amount < 0 && logUnitPrice == 0 && component.UnitPriceCents > 0 {
+		if params.Amount < 0 && logUnitPrice == 0 && component.UnitPriceMicro > 0 {
 			qty := -params.Amount
-			logUnitPrice = component.UnitPriceCents
-			logTotalPrice = price.TotalPriceCents(component.UnitPriceCents, qty)
+			logUnitPrice = component.UnitPriceMicro
+			logTotalPrice = price.OutboundTotalCents(component.UnitPriceMicro, qty)
 		}
 
 		log := models.StockLog{
 			ComponentID:     params.ComponentID,
 			ChangeAmount:    params.Amount,
-			UnitPriceCents:  logUnitPrice,
+			UnitPriceMicro:  logUnitPrice,
 			TotalPriceCents: logTotalPrice,
 			Reason:          params.Reason,
 		}
