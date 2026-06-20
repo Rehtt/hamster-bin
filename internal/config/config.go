@@ -46,7 +46,7 @@ func Load() *Config {
 		LLMModel:       getEnv("LLM_MODEL", ""),
 		AdminUsername:  getEnv("ADMIN_USERNAME", ""),
 		AdminPassword:  getEnv("ADMIN_PASSWORD", ""),
-		JWTSecret:      getEnv("JWT_SECRET", "168"),
+		JWTSecret:      getEnv("JWT_SECRET", ""),
 		JWTExpireHours: expireHours,
 	}
 
