@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"image"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	_ "image/jpeg"
 	_ "image/png"
@@ -33,13 +37,28 @@ func NewComponentHandler(db *gorm.DB) *ComponentHandler {
 	}
 }
 
-// GetAll 获取所有元件（支持分页和搜索）
-// @route GET /api/v1/components?page=1&page_size=20&manufacturer=YAGEO&value=10k&category_id=1
-// 分字段 query：component_number、name、model、manufacturer、value、supplier、supplier_part_number；各字段内空格拆词 AND，字段间 AND。keyword 仍兼容旧客户端。
-func (h *ComponentHandler) GetAll(c *gin.Context) {
+var componentExportColumnLabels = map[string]string{
+	"component_number":     "系统编号",
+	"name":                 "名称",
+	"model":                "厂家型号",
+	"manufacturer":         "制造商",
+	"value":                "参数",
+	"package":              "封装",
+	"description":          "描述",
+	"category":             "分类",
+	"stock_quantity":       "库存数量",
+	"unit_price":           "参考单价",
+	"location":             "存放位置",
+	"supplier":             "供应商",
+	"supplier_part_number": "供应商料号",
+	"datasheet_url":        "数据手册",
+	"created_at":           "创建时间",
+	"updated_at":           "更新时间",
+}
+
+func parseComponentQueryFromContext(c *gin.Context) repository.ComponentQuery {
 	var query repository.ComponentQuery
 
-	// 解析查询参数
 	if page := c.Query("page"); page != "" {
 		query.Page, _ = strconv.Atoi(page)
 	} else {
@@ -69,6 +88,66 @@ func (h *ComponentHandler) GetAll(c *gin.Context) {
 		}
 	}
 
+	return query
+}
+
+func componentExportValue(component *models.Component, column string) string {
+	switch column {
+	case "component_number":
+		if component.ComponentNumber != nil {
+			return *component.ComponentNumber
+		}
+		return ""
+	case "name":
+		return component.Name
+	case "model":
+		return component.Model
+	case "manufacturer":
+		return component.Manufacturer
+	case "value":
+		return component.Value
+	case "package":
+		return component.Package
+	case "description":
+		return component.Description
+	case "category":
+		if component.Category != nil {
+			return component.Category.Name
+		}
+		return ""
+	case "stock_quantity":
+		return strconv.Itoa(component.StockQuantity)
+	case "unit_price":
+		if component.UnitPriceCents > 0 {
+			return fmt.Sprintf("%.2f", float64(component.UnitPriceCents)/100)
+		}
+		return ""
+	case "location":
+		return component.Location
+	case "supplier":
+		if component.Supplier != nil {
+			return component.Supplier.Name
+		}
+		return ""
+	case "supplier_part_number":
+		return component.SupplierPartNumber
+	case "datasheet_url":
+		return component.DatasheetURL
+	case "created_at":
+		return component.CreatedAt.Format("2006-01-02 15:04:05")
+	case "updated_at":
+		return component.UpdatedAt.Format("2006-01-02 15:04:05")
+	default:
+		return ""
+	}
+}
+
+// GetAll 获取所有元件（支持分页和搜索）
+// @route GET /api/v1/components?page=1&page_size=20&manufacturer=YAGEO&value=10k&category_id=1
+// 分字段 query：component_number、name、model、manufacturer、value、supplier、supplier_part_number；各字段内空格拆词 AND，字段间 AND。keyword 仍兼容旧客户端。
+func (h *ComponentHandler) GetAll(c *gin.Context) {
+	query := parseComponentQueryFromContext(c)
+
 	components, total, err := h.componentRepo.GetAll(query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取元件列表失败"})
@@ -84,6 +163,96 @@ func (h *ComponentHandler) GetAll(c *gin.Context) {
 			"total_page": (total + int64(query.PageSize) - 1) / int64(query.PageSize),
 		},
 	})
+}
+
+// ExportCSV 导出元件列表为 CSV（支持筛选与自定义列/表头）
+// @route GET /api/v1/components/export?columns=component_number,name&headers=系统编号,名称
+func (h *ComponentHandler) ExportCSV(c *gin.Context) {
+	columnsParam := strings.TrimSpace(c.Query("columns"))
+	if columnsParam == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请指定导出列 columns"})
+		return
+	}
+
+	columns := strings.Split(columnsParam, ",")
+	headersParam := strings.TrimSpace(c.Query("headers"))
+	var headers []string
+	if headersParam != "" {
+		headers = strings.Split(headersParam, ",")
+	}
+
+	if len(headers) > 0 && len(headers) != len(columns) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "columns 与 headers 数量不一致"})
+		return
+	}
+
+	validColumns := make([]string, 0, len(columns))
+	validHeaders := make([]string, 0, len(columns))
+	for i, column := range columns {
+		column = strings.TrimSpace(column)
+		if column == "" {
+			continue
+		}
+		if _, ok := componentExportColumnLabels[column]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的导出列: " + column})
+			return
+		}
+		validColumns = append(validColumns, column)
+
+		header := componentExportColumnLabels[column]
+		if len(headers) > i {
+			if custom := strings.TrimSpace(headers[i]); custom != "" {
+				header = custom
+			}
+		}
+		validHeaders = append(validHeaders, header)
+	}
+
+	if len(validColumns) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择一列导出"})
+		return
+	}
+
+	query := parseComponentQueryFromContext(c)
+	query.Page = 1
+	query.PageSize = -1
+
+	components, _, err := h.componentRepo.GetAll(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取元件列表失败"})
+		return
+	}
+
+	filename := fmt.Sprintf("components_%s.csv", time.Now().Format("20060102"))
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+
+	writer := csv.NewWriter(c.Writer)
+	if _, err := c.Writer.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 CSV 失败"})
+		return
+	}
+	if err := writer.Write(validHeaders); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 CSV 失败"})
+		return
+	}
+
+	for i := range components {
+		row := make([]string, len(validColumns))
+		for j, column := range validColumns {
+			row[j] = componentExportValue(&components[i], column)
+		}
+		if err := writer.Write(row); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 CSV 失败"})
+			return
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 CSV 失败"})
+		return
+	}
 }
 
 // GetOptions 获取元件录入表单的历史选项（封装、位置、制造商）

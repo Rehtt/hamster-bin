@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRef } from 'react';
-import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
@@ -73,6 +73,62 @@ const SEARCH_PARAM_KEYS: (keyof ComponentSearchFilters)[] = [
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
+type ExportColumnKey =
+  | 'component_number'
+  | 'name'
+  | 'model'
+  | 'manufacturer'
+  | 'value'
+  | 'package'
+  | 'description'
+  | 'category'
+  | 'stock_quantity'
+  | 'unit_price'
+  | 'location'
+  | 'supplier'
+  | 'supplier_part_number'
+  | 'datasheet_url'
+  | 'created_at'
+  | 'updated_at';
+
+type ExportColumnConfig = {
+  key: ExportColumnKey;
+  defaultHeader: string;
+  defaultSelected: boolean;
+};
+
+type ExportColumnState = {
+  key: ExportColumnKey;
+  selected: boolean;
+  header: string;
+};
+
+const EXPORT_COLUMNS: ExportColumnConfig[] = [
+  { key: 'component_number', defaultHeader: '系统编号', defaultSelected: true },
+  { key: 'name', defaultHeader: '名称', defaultSelected: true },
+  { key: 'model', defaultHeader: '厂家型号', defaultSelected: true },
+  { key: 'manufacturer', defaultHeader: '制造商', defaultSelected: true },
+  { key: 'value', defaultHeader: '参数', defaultSelected: true },
+  { key: 'package', defaultHeader: '封装', defaultSelected: true },
+  { key: 'description', defaultHeader: '描述', defaultSelected: false },
+  { key: 'category', defaultHeader: '分类', defaultSelected: true },
+  { key: 'stock_quantity', defaultHeader: '库存数量', defaultSelected: true },
+  { key: 'unit_price', defaultHeader: '参考单价', defaultSelected: true },
+  { key: 'location', defaultHeader: '存放位置', defaultSelected: true },
+  { key: 'supplier', defaultHeader: '供应商', defaultSelected: true },
+  { key: 'supplier_part_number', defaultHeader: '供应商料号', defaultSelected: true },
+  { key: 'datasheet_url', defaultHeader: '数据手册', defaultSelected: false },
+  { key: 'created_at', defaultHeader: '创建时间', defaultSelected: false },
+  { key: 'updated_at', defaultHeader: '更新时间', defaultSelected: false },
+];
+
+const createDefaultExportColumns = (): ExportColumnState[] =>
+  EXPORT_COLUMNS.map(column => ({
+    key: column.key,
+    selected: column.defaultSelected,
+    header: column.defaultHeader,
+  }));
+
 type ParsedComponentInfo = {
   name?: string;
   category_name?: string;
@@ -107,6 +163,9 @@ export default function Components() {
   const [batchLocation, setBatchLocation] = useState('');
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
   const [isGeneratingNumbers, setIsGeneratingNumbers] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [exportColumns, setExportColumns] = useState<ExportColumnState[]>(createDefaultExportColumns);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -389,6 +448,91 @@ export default function Components() {
     }
   };
 
+  const buildExportSearchParams = () => {
+    const params = new URLSearchParams();
+    const resolvedCategoryId = resolveCategoryId(categorySearchInput, selectedCategory);
+    if (resolvedCategoryId) params.set('category_id', resolvedCategoryId);
+    for (const key of SEARCH_PARAM_KEYS) {
+      const value = searchFilters[key].trim();
+      if (value) params.set(key, value);
+    }
+    return params;
+  };
+
+  const toggleExportColumn = (key: ExportColumnKey, selected: boolean) => {
+    setExportColumns(prev => prev.map(column => (column.key === key ? { ...column, selected } : column)));
+  };
+
+  const updateExportHeader = (key: ExportColumnKey, header: string) => {
+    setExportColumns(prev => prev.map(column => (column.key === key ? { ...column, header } : column)));
+  };
+
+  const toggleExportSelectAll = (selected: boolean) => {
+    setExportColumns(prev => prev.map(column => ({ ...column, selected })));
+  };
+
+  const openExportModal = () => {
+    setExportColumns(createDefaultExportColumns());
+    setIsExportOpen(true);
+  };
+
+  const handleExportCSV = async () => {
+    const selectedColumns = exportColumns.filter(column => column.selected);
+    if (selectedColumns.length === 0) {
+      toast.error('请至少选择一列');
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const params = buildExportSearchParams();
+      params.set('columns', selectedColumns.map(column => column.key).join(','));
+      params.set(
+        'headers',
+        selectedColumns
+          .map(column => {
+            const trimmed = column.header.trim();
+            if (trimmed) return trimmed;
+            return EXPORT_COLUMNS.find(item => item.key === column.key)?.defaultHeader || column.key;
+          })
+          .join(','),
+      );
+
+      const response = await fetch(`/api/v1/components/export?${params.toString()}`);
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error || '导出失败');
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition');
+      let filename = 'components.csv';
+      if (disposition) {
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        if (match?.[1]) filename = match[1];
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success('导出成功');
+      setIsExportOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导出失败';
+      toast.error(message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const isAllExportSelected = exportColumns.length > 0 && exportColumns.every(column => column.selected);
+
   const isAllSelected = components.length > 0 && selectedIds.length === components.length;
   const totalPage = pagination.total_page ?? (pagination.total > 0 ? Math.ceil(pagination.total / pagination.page_size) : 0);
 
@@ -666,6 +810,9 @@ export default function Components() {
                     <QrCode className="mr-2 h-4 w-4" /> 扫码录入
                 </Button>
             )}
+            <Button variant="outline" onClick={openExportModal}>
+              <Download className="mr-2 h-4 w-4" /> 导出 CSV
+            </Button>
             <Button variant="outline" onClick={handleGenerateNumbers} disabled={isGeneratingNumbers}>
               {isGeneratingNumbers ? (
                 <>
@@ -1548,6 +1695,78 @@ export default function Components() {
              ))
             }
          </div>
+      </Modal>
+
+      {/* Export Modal */}
+      <Modal
+        isOpen={isExportOpen}
+        onClose={() => !isExporting && setIsExportOpen(false)}
+        title="导出 CSV"
+        className="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsExportOpen(false)} disabled={isExporting}>
+              取消
+            </Button>
+            <Button onClick={handleExportCSV} disabled={isExporting}>
+              {isExporting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  导出中...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  确认导出
+                </>
+              )}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            将按当前筛选条件导出全部匹配元件，可自定义导出列与表头名称。
+          </p>
+          <div className="flex items-center justify-between rounded-md border px-3 py-2">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={isAllExportSelected}
+                onChange={e => toggleExportSelectAll(e.target.checked)}
+                className="h-4 w-4 rounded border-input"
+              />
+              全选
+            </label>
+            <span className="text-xs text-muted-foreground">
+              已选 {exportColumns.filter(column => column.selected).length} / {exportColumns.length} 列
+            </span>
+          </div>
+          <div className="max-h-[50vh] overflow-auto rounded-md border divide-y">
+            {exportColumns.map(column => {
+              const defaultHeader = EXPORT_COLUMNS.find(item => item.key === column.key)?.defaultHeader || column.key;
+              return (
+                <div key={column.key} className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-3 items-center px-3 py-3">
+                  <label className="flex items-center gap-2 text-sm whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={column.selected}
+                      onChange={e => toggleExportColumn(column.key, e.target.checked)}
+                      className="h-4 w-4 rounded border-input"
+                    />
+                    {defaultHeader}
+                  </label>
+                  <Input
+                    value={column.header}
+                    onChange={e => updateExportHeader(column.key, e.target.value)}
+                    placeholder={defaultHeader}
+                    disabled={!column.selected}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </Modal>
 
       {/* Scanner Modal */}

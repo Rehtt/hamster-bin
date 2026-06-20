@@ -55,6 +55,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 		{
 			components.GET("", componentHandler.GetAll)
 			components.GET("/options", componentHandler.GetOptions)
+			components.GET("/export", componentHandler.ExportCSV)
 			components.PATCH("/batch-location", componentHandler.BatchUpdateLocation)
 			components.PATCH("/generate-numbers", componentHandler.GenerateMissingNumbers)
 			components.GET("/:id", componentHandler.GetByID)
