@@ -88,7 +88,21 @@ func parseComponentQueryFromContext(c *gin.Context) repository.ComponentQuery {
 		}
 	}
 
+	query.SortBy = strings.TrimSpace(c.Query("sort_by"))
+	query.SortOrder = strings.TrimSpace(c.Query("sort_order"))
+
 	return query
+}
+
+func validateComponentSort(query repository.ComponentQuery) string {
+	if query.SortBy != "" && !repository.IsValidComponentSortBy(query.SortBy) {
+		return "不支持的排序字段: " + query.SortBy
+	}
+	order := strings.ToLower(strings.TrimSpace(query.SortOrder))
+	if order != "" && order != "asc" && order != "desc" {
+		return "sort_order 仅支持 asc 或 desc"
+	}
+	return ""
 }
 
 func componentExportValue(component *models.Component, column string) string {
@@ -147,6 +161,10 @@ func componentExportValue(component *models.Component, column string) string {
 // 分字段 query：component_number、name、model、manufacturer、value、supplier、supplier_part_number；各字段内空格拆词 AND，字段间 AND。keyword 仍兼容旧客户端。
 func (h *ComponentHandler) GetAll(c *gin.Context) {
 	query := parseComponentQueryFromContext(c)
+	if msg := validateComponentSort(query); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		return
+	}
 
 	components, total, err := h.componentRepo.GetAll(query)
 	if err != nil {
@@ -214,6 +232,10 @@ func (h *ComponentHandler) ExportCSV(c *gin.Context) {
 	}
 
 	query := parseComponentQueryFromContext(c)
+	if msg := validateComponentSort(query); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		return
+	}
 	query.Page = 1
 	query.PageSize = -1
 

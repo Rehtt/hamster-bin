@@ -32,6 +32,33 @@ type ComponentQuery struct {
 	SupplierPartNumber string
 	Page               int
 	PageSize           int
+	SortBy             string
+	SortOrder          string
+}
+
+// ComponentSortColumns 允许排序的 API 字段名到 SQL 列映射
+var ComponentSortColumns = map[string]string{
+	"component_number":     "components.component_number",
+	"name":                 "components.name",
+	"model":                "components.model",
+	"manufacturer":         "components.manufacturer",
+	"value":                "components.value",
+	"package":              "components.package",
+	"description":          "components.description",
+	"category":             "categories.name",
+	"stock_quantity":       "components.stock_quantity",
+	"unit_price":           "components.unit_price_cents",
+	"location":             "components.location",
+	"supplier":             "suppliers.name",
+	"supplier_part_number": "components.supplier_part_number",
+	"datasheet_url":        "components.datasheet_url",
+	"created_at":           "components.created_at",
+	"updated_at":           "components.updated_at",
+}
+
+func IsValidComponentSortBy(sortBy string) bool {
+	_, ok := ComponentSortColumns[sortBy]
+	return ok
 }
 
 func applyColumnLikeTokens(db *gorm.DB, column, raw string) *gorm.DB {
@@ -53,7 +80,30 @@ func applyKeywordTokens(db *gorm.DB, keyword string) *gorm.DB {
 }
 
 func needsSupplierJoin(query ComponentQuery) bool {
-	return query.SupplierName != "" || query.Keyword != ""
+	return query.SupplierName != "" || query.Keyword != "" || query.SortBy == "supplier"
+}
+
+func needsCategoryJoin(query ComponentQuery) bool {
+	return query.SortBy == "category"
+}
+
+func applyComponentSort(db *gorm.DB, query ComponentQuery) *gorm.DB {
+	sortBy := strings.TrimSpace(query.SortBy)
+	if sortBy == "" {
+		sortBy = "updated_at"
+	}
+
+	column, ok := ComponentSortColumns[sortBy]
+	if !ok {
+		column = ComponentSortColumns["updated_at"]
+	}
+
+	order := "DESC"
+	if strings.EqualFold(strings.TrimSpace(query.SortOrder), "asc") {
+		order = "ASC"
+	}
+
+	return db.Order(column + " " + order)
 }
 
 // GetAll 获取所有元件（支持分页和搜索）
@@ -70,6 +120,9 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 
 	if needsSupplierJoin(query) {
 		db = db.Joins("LEFT JOIN suppliers ON suppliers.id = components.supplier_id")
+	}
+	if needsCategoryJoin(query) {
+		db = db.Joins("LEFT JOIN categories ON categories.id = components.category_id")
 	}
 
 	db = applyColumnLikeTokens(db, "components.component_number", query.ComponentNumber)
@@ -93,7 +146,7 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 		db = db.Offset(offset).Limit(query.PageSize)
 	}
 
-	err := db.Order("components.updated_at DESC").Find(&components).Error
+	err := applyComponentSort(db, query).Find(&components).Error
 	return components, total, err
 }
 

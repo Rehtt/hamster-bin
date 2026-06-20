@@ -175,6 +175,52 @@ func TestComponentRepositoryGetAllKeywordTokens(t *testing.T) {
 	}
 }
 
+func TestComponentRepositoryGetAllSort(t *testing.T) {
+	db := setupComponentTestDB(t)
+	seedComponentFixtures(t, db)
+	repo := NewComponentRepository(db)
+
+	if err := db.Model(&models.Component{}).Where("name = ?", "贴片电阻").Update("stock_quantity", 10).Error; err != nil {
+		t.Fatalf("update stock: %v", err)
+	}
+	if err := db.Model(&models.Component{}).Where("name = ?", "贴片电容").Update("stock_quantity", 5).Error; err != nil {
+		t.Fatalf("update stock: %v", err)
+	}
+	if err := db.Model(&models.Component{}).Where("name = ?", "ESP32 模块").Update("stock_quantity", 20).Error; err != nil {
+		t.Fatalf("update stock: %v", err)
+	}
+
+	t.Run("sort by name asc", func(t *testing.T) {
+		items, _, err := repo.GetAll(ComponentQuery{SortBy: "name", SortOrder: "asc"})
+		if err != nil {
+			t.Fatalf("GetAll: %v", err)
+		}
+		want := []string{"ESP32 模块", "贴片电容", "贴片电阻"}
+		got := componentNames(items)
+		if len(got) != len(want) {
+			t.Fatalf("len(items) = %d, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("got names %v, want %v", got, want)
+			}
+		}
+	})
+
+	t.Run("sort by stock_quantity desc", func(t *testing.T) {
+		items, _, err := repo.GetAll(ComponentQuery{SortBy: "stock_quantity", SortOrder: "desc"})
+		if err != nil {
+			t.Fatalf("GetAll: %v", err)
+		}
+		want := []string{"ESP32 模块", "贴片电阻", "贴片电容"}
+		for i := range want {
+			if items[i].Name != want[i] {
+				t.Fatalf("got names %v, want %v", componentNames(items), want)
+			}
+		}
+	})
+}
+
 func TestComponentRepositoryGetDistinctManufacturers(t *testing.T) {
 	db := setupComponentTestDB(t)
 	seedComponentFixtures(t, db)

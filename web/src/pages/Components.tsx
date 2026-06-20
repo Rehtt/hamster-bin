@@ -41,6 +41,8 @@ type ComponentSearchParams = {
   value?: string;
   supplier?: string;
   supplier_part_number?: string;
+  sort_by?: string;
+  sort_order?: string;
 };
 
 const EMPTY_SEARCH_FILTERS: ComponentSearchFilters = {
@@ -90,6 +92,11 @@ type ExportColumnKey =
   | 'datasheet_url'
   | 'created_at'
   | 'updated_at';
+
+type ComponentSortOrder = 'asc' | 'desc';
+
+const DEFAULT_SORT_BY: ExportColumnKey = 'updated_at';
+const DEFAULT_SORT_ORDER: ComponentSortOrder = 'desc';
 
 type ExportColumnConfig = {
   key: ExportColumnKey;
@@ -166,6 +173,8 @@ export default function Components() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportColumns, setExportColumns] = useState<ExportColumnState[]>(createDefaultExportColumns);
   const [isExporting, setIsExporting] = useState(false);
+  const [sortBy, setSortBy] = useState<ExportColumnKey>(DEFAULT_SORT_BY);
+  const [sortOrder, setSortOrder] = useState<ComponentSortOrder>(DEFAULT_SORT_ORDER);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -273,10 +282,17 @@ export default function Components() {
     filters: ComponentSearchFilters = searchFilters,
     categoryInput: string = categorySearchInput,
     categoryId: string = selectedCategory,
+    nextSortBy: ExportColumnKey = sortBy,
+    nextSortOrder: ComponentSortOrder = sortOrder,
   ) => {
     setLoading(true);
     try {
-      const params: ComponentSearchParams = { page, page_size: pageSize };
+      const params: ComponentSearchParams = {
+        page,
+        page_size: pageSize,
+        sort_by: nextSortBy,
+        sort_order: nextSortOrder,
+      };
       const resolvedCategoryId = resolveCategoryId(categoryInput, categoryId);
       if (resolvedCategoryId) params.category_id = resolvedCategoryId;
       for (const key of SEARCH_PARAM_KEYS) {
@@ -341,9 +357,26 @@ export default function Components() {
     setSearchFilters(EMPTY_SEARCH_FILTERS);
     setSelectedCategory('');
     setCategorySearchInput('');
+    setSortBy(DEFAULT_SORT_BY);
+    setSortOrder(DEFAULT_SORT_ORDER);
     setPagination(prev => ({ ...prev, page: 1 }));
-    fetchComponents(1, pagination.page_size, EMPTY_SEARCH_FILTERS, '', '');
+    fetchComponents(1, pagination.page_size, EMPTY_SEARCH_FILTERS, '', '', DEFAULT_SORT_BY, DEFAULT_SORT_ORDER);
   };
+
+  const handleSortByChange = (value: ExportColumnKey) => {
+    setSortBy(value);
+    setPagination(prev => ({ ...prev, page: 1 }));
+    fetchComponents(1, pagination.page_size, searchFilters, categorySearchInput, selectedCategory, value, sortOrder);
+  };
+
+  const handleSortOrderChange = (value: ComponentSortOrder) => {
+    setSortOrder(value);
+    setPagination(prev => ({ ...prev, page: 1 }));
+    fetchComponents(1, pagination.page_size, searchFilters, categorySearchInput, selectedCategory, sortBy, value);
+  };
+
+  const currentSortLabel = EXPORT_COLUMNS.find(column => column.key === sortBy)?.defaultHeader || sortBy;
+  const currentSortOrderLabel = sortOrder === 'asc' ? '升序' : '降序';
 
   const hasActiveFilters =
     selectedCategory !== '' ||
@@ -456,6 +489,8 @@ export default function Components() {
       const value = searchFilters[key].trim();
       if (value) params.set(key, value);
     }
+    params.set('sort_by', sortBy);
+    params.set('sort_order', sortOrder);
     return params;
   };
 
@@ -947,6 +982,35 @@ export default function Components() {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <div className="space-y-1">
+              <Label htmlFor="sort-by" className="text-xs text-muted-foreground">排序字段</Label>
+              <select
+                id="sort-by"
+                value={sortBy}
+                onChange={e => handleSortByChange(e.target.value as ExportColumnKey)}
+                className="h-9 w-full sm:w-40 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {EXPORT_COLUMNS.map(column => (
+                  <option key={column.key} value={column.key}>
+                    {column.defaultHeader}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="sort-order" className="text-xs text-muted-foreground">排序方向</Label>
+              <select
+                id="sort-order"
+                value={sortOrder}
+                onChange={e => handleSortOrderChange(e.target.value as ComponentSortOrder)}
+                className="h-9 w-full sm:w-28 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                <option value="asc">升序</option>
+                <option value="desc">降序</option>
+              </select>
+            </div>
+          </div>
           <div className="flex gap-2 sm:ml-auto">
             <Button onClick={handleSearch} variant="secondary">
               <Search className="h-4 w-4 mr-2" />搜索
@@ -1727,6 +1791,9 @@ export default function Components() {
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
             将按当前筛选条件导出全部匹配元件，可自定义导出列与表头名称。
+          </p>
+          <p className="text-sm text-muted-foreground">
+            导出顺序与当前列表排序一致（{currentSortLabel}，{currentSortOrderLabel}）。
           </p>
           <div className="flex items-center justify-between rounded-md border px-3 py-2">
             <label className="flex items-center gap-2 text-sm font-medium">
