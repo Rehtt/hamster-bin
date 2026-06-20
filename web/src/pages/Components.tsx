@@ -96,6 +96,12 @@ type ComponentSortOrder = 'asc' | 'desc';
 
 const DEFAULT_SORT_BY: ExportColumnKey = 'updated_at';
 const DEFAULT_SORT_ORDER: ComponentSortOrder = 'desc';
+const COMPONENT_SORT_STORAGE_KEY = 'hamster-components-sort';
+
+type StoredComponentSort = {
+  sortBy: ExportColumnKey;
+  sortOrder: ComponentSortOrder;
+};
 
 type ExportColumnConfig = {
   key: ExportColumnKey;
@@ -135,6 +141,34 @@ const createDefaultExportColumns = (): ExportColumnState[] =>
     header: column.defaultHeader,
   }));
 
+const VALID_SORT_BY_KEYS = new Set<ExportColumnKey>(EXPORT_COLUMNS.map(column => column.key));
+
+const readStoredComponentSort = (): StoredComponentSort => {
+  const fallback: StoredComponentSort = { sortBy: DEFAULT_SORT_BY, sortOrder: DEFAULT_SORT_ORDER };
+  try {
+    const raw = localStorage.getItem(COMPONENT_SORT_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as { sortBy?: string; sortOrder?: string };
+    const sortBy = VALID_SORT_BY_KEYS.has(parsed.sortBy as ExportColumnKey)
+      ? (parsed.sortBy as ExportColumnKey)
+      : DEFAULT_SORT_BY;
+    const sortOrder = parsed.sortOrder === 'asc' || parsed.sortOrder === 'desc'
+      ? parsed.sortOrder
+      : DEFAULT_SORT_ORDER;
+    return { sortBy, sortOrder };
+  } catch {
+    return fallback;
+  }
+};
+
+const persistComponentSort = (sortBy: ExportColumnKey, sortOrder: ComponentSortOrder) => {
+  try {
+    localStorage.setItem(COMPONENT_SORT_STORAGE_KEY, JSON.stringify({ sortBy, sortOrder }));
+  } catch {
+    // ignore quota or privacy mode errors
+  }
+};
+
 type ParsedComponentInfo = {
   name?: string;
   category_name?: string;
@@ -172,8 +206,8 @@ export default function Components() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportColumns, setExportColumns] = useState<ExportColumnState[]>(createDefaultExportColumns);
   const [isExporting, setIsExporting] = useState(false);
-  const [sortBy, setSortBy] = useState<ExportColumnKey>(DEFAULT_SORT_BY);
-  const [sortOrder, setSortOrder] = useState<ComponentSortOrder>(DEFAULT_SORT_ORDER);
+  const [sortBy, setSortBy] = useState<ExportColumnKey>(() => readStoredComponentSort().sortBy);
+  const [sortOrder, setSortOrder] = useState<ComponentSortOrder>(() => readStoredComponentSort().sortOrder);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -356,20 +390,20 @@ export default function Components() {
     setSearchFilters(EMPTY_SEARCH_FILTERS);
     setSelectedCategory('');
     setCategorySearchInput('');
-    setSortBy(DEFAULT_SORT_BY);
-    setSortOrder(DEFAULT_SORT_ORDER);
     setPagination(prev => ({ ...prev, page: 1 }));
-    fetchComponents(1, pagination.page_size, EMPTY_SEARCH_FILTERS, '', '', DEFAULT_SORT_BY, DEFAULT_SORT_ORDER);
+    fetchComponents(1, pagination.page_size, EMPTY_SEARCH_FILTERS, '', '', sortBy, sortOrder);
   };
 
   const handleSortByChange = (value: ExportColumnKey) => {
     setSortBy(value);
+    persistComponentSort(value, sortOrder);
     setPagination(prev => ({ ...prev, page: 1 }));
     fetchComponents(1, pagination.page_size, searchFilters, categorySearchInput, selectedCategory, value, sortOrder);
   };
 
   const handleSortOrderChange = (value: ComponentSortOrder) => {
     setSortOrder(value);
+    persistComponentSort(sortBy, value);
     setPagination(prev => ({ ...prev, page: 1 }));
     fetchComponents(1, pagination.page_size, searchFilters, categorySearchInput, selectedCategory, sortBy, value);
   };
@@ -600,6 +634,7 @@ export default function Components() {
       setFormData(component);
       setCategoryInput(component.category?.name || '');
       setSupplierInput(component.supplier?.name || '');
+      setFormTotalPriceYuan('');
     } else {
       setEditingComponent(null);
       setFormData({ stock_quantity: 0 });
@@ -684,9 +719,16 @@ export default function Components() {
         stock_quantity: Number(formData.stock_quantity)
       };
 
+      const qty = Number(formData.stock_quantity);
       const totalPriceCents = yuanToCents(formTotalPriceYuan);
-      if (!editingComponent && Number(formData.stock_quantity) > 0 && totalPriceCents > 0) {
+      const canSetPrice = totalPriceCents > 0 && qty > 0;
+      const isBackfill = !!editingComponent && (editingComponent.unit_price_cents ?? 0) === 0;
+
+      if ((!editingComponent || isBackfill) && canSetPrice) {
         data.total_price_cents = totalPriceCents;
+      } else if (isBackfill && totalPriceCents > 0 && qty <= 0) {
+        toast.error('库存为 0 时无法补录价格');
+        return;
       }
 
       let savedId = editingComponent?.id;
@@ -1462,7 +1504,7 @@ export default function Components() {
                         </Button>
                     </div>
                 </div>
-                {!editingComponent && (
+                {(!editingComponent || (editingComponent && (editingComponent.unit_price_cents ?? 0) === 0)) && (
                   <div className="space-y-2">
                     <Label>采购总价（元）</Label>
                     <Input

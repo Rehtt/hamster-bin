@@ -393,13 +393,18 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "元件不存在"})
 		return
 	}
-	component := existing
+	component := *existing
 
 	// 2. 将请求数据绑定到现有对象上（支持部分更新）
-	if err := c.ShouldBindJSON(component); err != nil {
+	var req struct {
+		models.Component
+		TotalPriceCents *int64 `json:"total_price_cents"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
 		return
 	}
+	component = req.Component
 
 	// 3. 确保 ID 正确
 	component.ID = uint(id)
@@ -408,7 +413,7 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	component.Category = nil
 	component.Supplier = nil
 
-	if err := h.componentRepo.ValidateComponentNumberForUpdate(component, existing); err != nil {
+	if err := h.componentRepo.ValidateComponentNumberForUpdate(&component, existing); err != nil {
 		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "元件编号已存在"})
 			return
@@ -417,19 +422,45 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var backfillTotalPriceCents int64
+	if existing.UnitPriceCents == 0 && req.TotalPriceCents != nil && *req.TotalPriceCents > 0 {
+		if component.StockQuantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "库存为 0 时无法补录价格"})
+			return
+		}
+		component.UnitPriceCents = price.UnitPriceCents(*req.TotalPriceCents, component.StockQuantity)
+		backfillTotalPriceCents = *req.TotalPriceCents
+	} else {
+		component.UnitPriceCents = existing.UnitPriceCents
+	}
+
 	// 5. 保存更新
-	if err := h.componentRepo.Update(component); err != nil {
+	if err := h.componentRepo.Update(&component); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新元件失败"})
 		return
 	}
 
-	component, err = h.componentRepo.GetByID(uint(id))
+	if backfillTotalPriceCents > 0 {
+		log := models.StockLog{
+			ComponentID:     component.ID,
+			ChangeAmount:    0,
+			UnitPriceCents:  component.UnitPriceCents,
+			TotalPriceCents: backfillTotalPriceCents,
+			Reason:          "补录价格",
+		}
+		if err := h.stockLogRepo.Create(&log); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建补录价格记录失败"})
+			return
+		}
+	}
+
+	componentPtr, err := h.componentRepo.GetByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取更新后元件失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": component})
+	c.JSON(http.StatusOK, gin.H{"data": componentPtr})
 }
 
 // BatchUpdateLocation 批量更新元件存放位置

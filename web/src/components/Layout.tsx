@@ -37,11 +37,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex">
+    <div className="min-h-screen bg-background text-foreground">
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex flex-col w-64 transform bg-card border-r border-border transition-all duration-200 ease-in-out md:translate-x-0 md:static md:inset-auto",
+          "fixed inset-y-0 left-0 z-40 flex flex-col w-64 transform bg-card border-r border-border transition-all duration-200 ease-in-out md:translate-x-0",
           isCollapsed ? "md:w-16" : "md:w-64",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
@@ -121,7 +121,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div
+        className={cn(
+          "flex flex-col min-h-screen min-w-0 transition-[margin-left] duration-200 ease-in-out",
+          isCollapsed ? "md:ml-16" : "md:ml-64"
+        )}
+      >
         <header className="md:hidden p-4 border-b border-border bg-card flex items-center">
           <button onClick={() => setIsSidebarOpen(true)}>
             <Menu className="h-6 w-6" />
