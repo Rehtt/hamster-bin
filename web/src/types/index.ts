@@ -25,6 +25,8 @@ export interface Component {
   location: string;
   datasheet_url: string;
   image_url: string;
+  created_at?: string;
+  updated_at?: string;
   category?: Category;
   supplier?: Supplier;
 }

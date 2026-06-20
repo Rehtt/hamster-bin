@@ -1,5 +1,22 @@
 import { lazy, Suspense, useEffect, useState, useRef } from 'react';
-import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download, Coins } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download, Coins, Columns3, GripVertical } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
@@ -110,39 +127,146 @@ type ExportColumnConfig = {
   key: ExportColumnKey;
   defaultHeader: string;
   defaultSelected: boolean;
+  defaultTableSelected: boolean;
 };
 
-type ExportColumnState = {
+type ColumnState = {
   key: ExportColumnKey;
   selected: boolean;
   header: string;
 };
 
 const EXPORT_COLUMNS: ExportColumnConfig[] = [
-  { key: 'component_number', defaultHeader: '系统编号', defaultSelected: true },
-  { key: 'name', defaultHeader: '名称', defaultSelected: true },
-  { key: 'model', defaultHeader: '厂家型号', defaultSelected: true },
-  { key: 'manufacturer', defaultHeader: '制造商', defaultSelected: true },
-  { key: 'value', defaultHeader: '参数', defaultSelected: true },
-  { key: 'package', defaultHeader: '封装', defaultSelected: true },
-  { key: 'description', defaultHeader: '描述', defaultSelected: false },
-  { key: 'category', defaultHeader: '分类', defaultSelected: true },
-  { key: 'stock_quantity', defaultHeader: '库存数量', defaultSelected: true },
-  { key: 'unit_price', defaultHeader: '参考单价', defaultSelected: true },
-  { key: 'location', defaultHeader: '存放位置', defaultSelected: true },
-  { key: 'supplier', defaultHeader: '供应商', defaultSelected: true },
-  { key: 'supplier_part_number', defaultHeader: '供应商料号', defaultSelected: true },
-  { key: 'datasheet_url', defaultHeader: '数据手册', defaultSelected: false },
-  { key: 'created_at', defaultHeader: '创建时间', defaultSelected: false },
-  { key: 'updated_at', defaultHeader: '更新时间', defaultSelected: false },
+  { key: 'component_number', defaultHeader: '系统编号', defaultSelected: true, defaultTableSelected: true },
+  { key: 'name', defaultHeader: '名称', defaultSelected: true, defaultTableSelected: true },
+  { key: 'model', defaultHeader: '厂家型号', defaultSelected: true, defaultTableSelected: true },
+  { key: 'manufacturer', defaultHeader: '制造商', defaultSelected: true, defaultTableSelected: true },
+  { key: 'value', defaultHeader: '参数', defaultSelected: true, defaultTableSelected: true },
+  { key: 'package', defaultHeader: '封装', defaultSelected: true, defaultTableSelected: true },
+  { key: 'description', defaultHeader: '描述', defaultSelected: false, defaultTableSelected: true },
+  { key: 'category', defaultHeader: '分类', defaultSelected: true, defaultTableSelected: true },
+  { key: 'stock_quantity', defaultHeader: '库存数量', defaultSelected: true, defaultTableSelected: true },
+  { key: 'unit_price', defaultHeader: '参考单价', defaultSelected: true, defaultTableSelected: false },
+  { key: 'location', defaultHeader: '存放位置', defaultSelected: true, defaultTableSelected: true },
+  { key: 'supplier', defaultHeader: '供应商', defaultSelected: true, defaultTableSelected: true },
+  { key: 'supplier_part_number', defaultHeader: '供应商料号', defaultSelected: true, defaultTableSelected: true },
+  { key: 'datasheet_url', defaultHeader: '数据手册', defaultSelected: false, defaultTableSelected: true },
+  { key: 'created_at', defaultHeader: '创建时间', defaultSelected: false, defaultTableSelected: false },
+  { key: 'updated_at', defaultHeader: '更新时间', defaultSelected: false, defaultTableSelected: false },
 ];
 
-const createDefaultExportColumns = (): ExportColumnState[] =>
+const VALID_COLUMN_KEYS = new Set<ExportColumnKey>(EXPORT_COLUMNS.map(column => column.key));
+const EXPORT_COLUMNS_STORAGE_KEY = 'hamster-components-export-columns';
+const TABLE_COLUMNS_STORAGE_KEY = 'hamster-components-table-columns';
+
+const getColumnConfig = (key: ExportColumnKey) =>
+  EXPORT_COLUMNS.find(column => column.key === key);
+
+const getColumnHeader = (column: ColumnState) => {
+  const trimmed = column.header.trim();
+  if (trimmed) return trimmed;
+  return getColumnConfig(column.key)?.defaultHeader || column.key;
+};
+
+const createDefaultExportColumns = (): ColumnState[] =>
   EXPORT_COLUMNS.map(column => ({
     key: column.key,
     selected: column.defaultSelected,
     header: column.defaultHeader,
   }));
+
+const createDefaultTableColumns = (): ColumnState[] =>
+  EXPORT_COLUMNS.map(column => ({
+    key: column.key,
+    selected: column.defaultTableSelected,
+    header: column.defaultHeader,
+  }));
+
+const normalizeStoredColumns = (
+  stored: unknown,
+  createDefault: () => ColumnState[],
+  getDefaultSelected: (key: ExportColumnKey) => boolean,
+): ColumnState[] => {
+  const defaults = createDefault();
+  if (!Array.isArray(stored)) return defaults;
+
+  const result: ColumnState[] = [];
+  const seen = new Set<ExportColumnKey>();
+
+  for (const item of stored) {
+    if (!item || typeof item !== 'object') continue;
+    const key = (item as ColumnState).key;
+    if (!VALID_COLUMN_KEYS.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    const config = getColumnConfig(key)!;
+    result.push({
+      key,
+      selected: typeof (item as ColumnState).selected === 'boolean'
+        ? (item as ColumnState).selected
+        : getDefaultSelected(key),
+      header: typeof (item as ColumnState).header === 'string'
+        ? (item as ColumnState).header
+        : config.defaultHeader,
+    });
+  }
+
+  for (const column of EXPORT_COLUMNS) {
+    if (!seen.has(column.key)) {
+      result.push({
+        key: column.key,
+        selected: getDefaultSelected(column.key),
+        header: column.defaultHeader,
+      });
+    }
+  }
+
+  if (!result.some(column => column.selected)) return defaults;
+  return result;
+};
+
+const readStoredExportColumns = (): ColumnState[] => {
+  try {
+    const raw = localStorage.getItem(EXPORT_COLUMNS_STORAGE_KEY);
+    if (!raw) return createDefaultExportColumns();
+    return normalizeStoredColumns(
+      JSON.parse(raw),
+      createDefaultExportColumns,
+      key => getColumnConfig(key)!.defaultSelected,
+    );
+  } catch {
+    return createDefaultExportColumns();
+  }
+};
+
+const persistExportColumns = (columns: ColumnState[]) => {
+  try {
+    localStorage.setItem(EXPORT_COLUMNS_STORAGE_KEY, JSON.stringify(columns));
+  } catch {
+    // ignore quota or privacy mode errors
+  }
+};
+
+const readStoredTableColumns = (): ColumnState[] => {
+  try {
+    const raw = localStorage.getItem(TABLE_COLUMNS_STORAGE_KEY);
+    if (!raw) return createDefaultTableColumns();
+    return normalizeStoredColumns(
+      JSON.parse(raw),
+      createDefaultTableColumns,
+      key => getColumnConfig(key)!.defaultTableSelected,
+    );
+  } catch {
+    return createDefaultTableColumns();
+  }
+};
+
+const persistTableColumns = (columns: ColumnState[]) => {
+  try {
+    localStorage.setItem(TABLE_COLUMNS_STORAGE_KEY, JSON.stringify(columns));
+  } catch {
+    // ignore quota or privacy mode errors
+  }
+};
 
 const VALID_SORT_BY_KEYS = new Set<ExportColumnKey>(EXPORT_COLUMNS.map(column => column.key));
 
@@ -188,6 +312,130 @@ type ParsedComponentInfo = {
   category?: Category;
 };
 
+type SortableColumnRowProps = {
+  column: ColumnState;
+  onToggle: (key: ExportColumnKey, selected: boolean) => void;
+  onUpdateHeader: (key: ExportColumnKey, header: string) => void;
+};
+
+function SortableColumnRow({ column, onToggle, onUpdateHeader }: SortableColumnRowProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: column.key });
+
+  const defaultHeader = getColumnConfig(column.key)?.defaultHeader || column.key;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="grid grid-cols-1 sm:grid-cols-[auto_auto_1fr] gap-2 sm:gap-3 items-center px-3 py-3 border-b last:border-b-0"
+    >
+      <button
+        type="button"
+        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground cursor-grab active:cursor-grabbing touch-none"
+        title="拖动调整顺序"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <label className="flex items-center gap-2 text-sm whitespace-nowrap">
+        <input
+          type="checkbox"
+          checked={column.selected}
+          onChange={e => onToggle(column.key, e.target.checked)}
+          className="h-4 w-4 rounded border-input"
+        />
+        {defaultHeader}
+      </label>
+      <Input
+        value={column.header}
+        onChange={e => onUpdateHeader(column.key, e.target.value)}
+        placeholder={defaultHeader}
+        disabled={!column.selected}
+      />
+    </div>
+  );
+}
+
+type ColumnSettingsPanelProps = {
+  columns: ColumnState[];
+  isAllSelected: boolean;
+  onToggle: (key: ExportColumnKey, selected: boolean) => void;
+  onUpdateHeader: (key: ExportColumnKey, header: string) => void;
+  onToggleAll: (selected: boolean) => void;
+  onReorder: (columns: ColumnState[]) => void;
+};
+
+function ColumnSettingsPanel({
+  columns,
+  isAllSelected,
+  onToggle,
+  onUpdateHeader,
+  onToggleAll,
+  onReorder,
+}: ColumnSettingsPanelProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = columns.findIndex(column => column.key === active.id);
+    const newIndex = columns.findIndex(column => column.key === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    onReorder(arrayMove(columns, oldIndex, newIndex));
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between rounded-md border px-3 py-2">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={isAllSelected}
+            onChange={e => onToggleAll(e.target.checked)}
+            className="h-4 w-4 rounded border-input"
+          />
+          全选
+        </label>
+        <span className="text-xs text-muted-foreground">
+          已选 {columns.filter(column => column.selected).length} / {columns.length} 列
+        </span>
+      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={columns.map(column => column.key)} strategy={verticalListSortingStrategy}>
+          <div className="max-h-[50vh] overflow-auto rounded-md border">
+            {columns.map(column => (
+              <SortableColumnRow
+                key={column.key}
+                column={column}
+                onToggle={onToggle}
+                onUpdateHeader={onUpdateHeader}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </>
+  );
+}
+
 export default function Components() {
   const [components, setComponents] = useState<Component[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -207,8 +455,12 @@ export default function Components() {
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
   const [isGeneratingNumbers, setIsGeneratingNumbers] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [exportColumns, setExportColumns] = useState<ExportColumnState[]>(createDefaultExportColumns);
+  const [exportColumns, setExportColumns] = useState<ColumnState[]>(() => readStoredExportColumns());
+  const [exportColumnsDraft, setExportColumnsDraft] = useState<ColumnState[]>(() => readStoredExportColumns());
   const [isExporting, setIsExporting] = useState(false);
+  const [tableColumns, setTableColumns] = useState<ColumnState[]>(() => readStoredTableColumns());
+  const [tableColumnsDraft, setTableColumnsDraft] = useState<ColumnState[]>(() => readStoredTableColumns());
+  const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
   const [sortBy, setSortBy] = useState<ExportColumnKey>(() => readStoredComponentSort().sortBy);
   const [sortOrder, setSortOrder] = useState<ComponentSortOrder>(() => readStoredComponentSort().sortOrder);
 
@@ -534,24 +786,140 @@ export default function Components() {
   };
 
   const toggleExportColumn = (key: ExportColumnKey, selected: boolean) => {
-    setExportColumns(prev => prev.map(column => (column.key === key ? { ...column, selected } : column)));
+    setExportColumnsDraft(prev => prev.map(column => (column.key === key ? { ...column, selected } : column)));
   };
 
   const updateExportHeader = (key: ExportColumnKey, header: string) => {
-    setExportColumns(prev => prev.map(column => (column.key === key ? { ...column, header } : column)));
+    setExportColumnsDraft(prev => prev.map(column => (column.key === key ? { ...column, header } : column)));
   };
 
   const toggleExportSelectAll = (selected: boolean) => {
-    setExportColumns(prev => prev.map(column => ({ ...column, selected })));
+    setExportColumnsDraft(prev => prev.map(column => ({ ...column, selected })));
+  };
+
+  const reorderExportColumns = (next: ColumnState[]) => {
+    setExportColumnsDraft(next);
+  };
+
+  const resetExportColumns = () => {
+    setExportColumnsDraft(createDefaultExportColumns());
   };
 
   const openExportModal = () => {
-    setExportColumns(createDefaultExportColumns());
+    setExportColumnsDraft(exportColumns);
     setIsExportOpen(true);
   };
 
+  const toggleTableColumn = (key: ExportColumnKey, selected: boolean) => {
+    setTableColumnsDraft(prev => prev.map(column => (column.key === key ? { ...column, selected } : column)));
+  };
+
+  const updateTableHeader = (key: ExportColumnKey, header: string) => {
+    setTableColumnsDraft(prev => prev.map(column => (column.key === key ? { ...column, header } : column)));
+  };
+
+  const toggleTableSelectAll = (selected: boolean) => {
+    setTableColumnsDraft(prev => prev.map(column => ({ ...column, selected })));
+  };
+
+  const reorderTableColumns = (next: ColumnState[]) => {
+    setTableColumnsDraft(next);
+  };
+
+  const resetTableColumns = () => {
+    setTableColumnsDraft(createDefaultTableColumns());
+  };
+
+  const openColumnSettings = () => {
+    setTableColumnsDraft(tableColumns);
+    setIsColumnSettingsOpen(true);
+  };
+
+  const confirmTableColumns = () => {
+    const selectedCount = tableColumnsDraft.filter(column => column.selected).length;
+    if (selectedCount === 0) {
+      toast.error('请至少选择一列');
+      return;
+    }
+    setTableColumns(tableColumnsDraft);
+    persistTableColumns(tableColumnsDraft);
+    setIsColumnSettingsOpen(false);
+  };
+
+  const visibleTableColumns = tableColumns.filter(column => column.selected);
+
+  const renderTableCell = (key: ExportColumnKey, component: Component) => {
+    switch (key) {
+      case 'component_number':
+        return <td className="p-4 align-middle font-mono text-xs">{component.component_number || '-'}</td>;
+      case 'name':
+        return <td className="p-4 align-middle font-medium">{component.name}</td>;
+      case 'model':
+        return <td className="p-4 align-middle">{component.model || '-'}</td>;
+      case 'manufacturer':
+        return <td className="p-4 align-middle">{component.manufacturer || '-'}</td>;
+      case 'value':
+        return <td className="p-4 align-middle">{component.value}</td>;
+      case 'package':
+        return <td className="p-4 align-middle">{component.package}</td>;
+      case 'description':
+        return (
+          <td className="p-4 align-middle max-w-[200px] truncate" title={component.description}>
+            {component.description}
+          </td>
+        );
+      case 'category':
+        return <td className="p-4 align-middle">{component.category?.name}</td>;
+      case 'stock_quantity':
+        return (
+          <td className="p-4 align-middle">
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+              component.stock_quantity < 10 ? 'bg-red-100 text-red-800' :
+              component.stock_quantity < 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
+            }`}>
+              {component.stock_quantity}
+            </span>
+          </td>
+        );
+      case 'unit_price':
+        return (
+          <td className="p-4 align-middle">
+            {component.unit_price_cents != null ? formatCents(component.unit_price_cents) : '-'}
+          </td>
+        );
+      case 'location':
+        return <td className="p-4 align-middle">{component.location}</td>;
+      case 'supplier':
+        return <td className="p-4 align-middle">{component.supplier?.name || '-'}</td>;
+      case 'supplier_part_number':
+        return <td className="p-4 align-middle">{component.supplier_part_number || '-'}</td>;
+      case 'datasheet_url':
+        return (
+          <td className="p-4 align-middle">
+            {component.datasheet_url ? (
+              <a href={component.datasheet_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">查看</a>
+            ) : '-'}
+          </td>
+        );
+      case 'created_at':
+        return (
+          <td className="p-4 align-middle whitespace-nowrap">
+            {component.created_at ? new Date(component.created_at).toLocaleString() : '-'}
+          </td>
+        );
+      case 'updated_at':
+        return (
+          <td className="p-4 align-middle whitespace-nowrap">
+            {component.updated_at ? new Date(component.updated_at).toLocaleString() : '-'}
+          </td>
+        );
+      default:
+        return <td className="p-4 align-middle">-</td>;
+    }
+  };
+
   const handleExportCSV = async () => {
-    const selectedColumns = exportColumns.filter(column => column.selected);
+    const selectedColumns = exportColumnsDraft.filter(column => column.selected);
     if (selectedColumns.length === 0) {
       toast.error('请至少选择一列');
       return;
@@ -563,13 +931,7 @@ export default function Components() {
       params.set('columns', selectedColumns.map(column => column.key).join(','));
       params.set(
         'headers',
-        selectedColumns
-          .map(column => {
-            const trimmed = column.header.trim();
-            if (trimmed) return trimmed;
-            return EXPORT_COLUMNS.find(item => item.key === column.key)?.defaultHeader || column.key;
-          })
-          .join(','),
+        selectedColumns.map(column => getColumnHeader(column)).join(','),
       );
 
       const response = await fetch(`/api/v1/components/export?${params.toString()}`, {
@@ -598,6 +960,8 @@ export default function Components() {
       URL.revokeObjectURL(url);
 
       toast.success('导出成功');
+      setExportColumns(exportColumnsDraft);
+      persistExportColumns(exportColumnsDraft);
       setIsExportOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : '导出失败';
@@ -607,7 +971,8 @@ export default function Components() {
     }
   };
 
-  const isAllExportSelected = exportColumns.length > 0 && exportColumns.every(column => column.selected);
+  const isAllExportSelected = exportColumnsDraft.length > 0 && exportColumnsDraft.every(column => column.selected);
+  const isAllTableSelected = tableColumnsDraft.length > 0 && tableColumnsDraft.every(column => column.selected);
 
   const isAllSelected = components.length > 0 && selectedIds.length === components.length;
   const totalPage = pagination.total_page ?? (pagination.total > 0 ? Math.ceil(pagination.total / pagination.page_size) : 0);
@@ -921,6 +1286,9 @@ export default function Components() {
                     <QrCode className="mr-2 h-4 w-4" /> 扫码录入
                 </Button>
             )}
+            <Button variant="outline" onClick={openColumnSettings}>
+              <Columns3 className="mr-2 h-4 w-4" /> 列设置
+            </Button>
             <Button variant="outline" onClick={openExportModal}>
               <Download className="mr-2 h-4 w-4" /> 导出 CSV
             </Button>
@@ -1123,25 +1491,17 @@ export default function Components() {
                   />
                 </th>
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">图片</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">编号</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">名称</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">厂家型号</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">制造商</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">参数</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">封装</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">供应商料号</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">分类</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">库存</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">位置</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">描述</th>
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">数据手册</th>
+                {visibleTableColumns.map(column => (
+                  <th key={column.key} className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">
+                    {getColumnHeader(column)}
+                  </th>
+                ))}
                 <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">操作</th>
               </tr>
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading ? (
-                <tr><td colSpan={16} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={2 + visibleTableColumns.length + 1} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle">
@@ -1165,36 +1525,11 @@ export default function Components() {
                             onError={(e) => {
                                 (e.target as HTMLImageElement).style.display = 'none';
                                 (e.target as HTMLImageElement).parentElement!.innerText = '📦';
-                                // 如果加载失败，移除点击事件，或者点击时不显示大图（可以在点击处理中判断）
-                                // 这里简单处理：如果显示了 emoji，点击依然会尝试加载图片但会失败
                             }}
                         />
                     </div>
                   </td>
-                  <td className="p-4 align-middle font-mono text-xs">{component.component_number || '-'}</td>
-                  <td className="p-4 align-middle font-medium">{component.name}</td>
-                  <td className="p-4 align-middle">{component.model || '-'}</td>
-                  <td className="p-4 align-middle">{component.manufacturer || '-'}</td>
-                  <td className="p-4 align-middle">{component.value}</td>
-                  <td className="p-4 align-middle">{component.package}</td>
-                  <td className="p-4 align-middle">{component.supplier?.name || '-'}</td>
-                  <td className="p-4 align-middle">{component.supplier_part_number || '-'}</td>
-                  <td className="p-4 align-middle">{component.category?.name}</td>
-                  <td className="p-4 align-middle">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        component.stock_quantity < 10 ? 'bg-red-100 text-red-800' : 
-                        component.stock_quantity < 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
-                    }`}>
-                        {component.stock_quantity}
-                    </span>
-                  </td>
-                  <td className="p-4 align-middle">{component.location}</td>
-                  <td className="p-4 align-middle max-w-[200px] truncate" title={component.description}>{component.description}</td>
-                  <td className="p-4 align-middle">
-                    {component.datasheet_url ? (
-                        <a href={component.datasheet_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">查看</a>
-                    ) : '-'}
-                  </td>
+                  {visibleTableColumns.map(column => renderTableCell(column.key, component))}
                   <td className="p-4 align-middle">
                     <div className="flex gap-2">
                         <Button variant="ghost" size="icon" onClick={() => openForm(component)} title="编辑"><Edit className="h-4 w-4" /></Button>
@@ -1903,6 +2238,41 @@ export default function Components() {
          </div>
       </Modal>
 
+      {/* Column Settings Modal */}
+      <Modal
+        isOpen={isColumnSettingsOpen}
+        onClose={() => setIsColumnSettingsOpen(false)}
+        title="列设置"
+        className="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsColumnSettingsOpen(false)}>
+              取消
+            </Button>
+            <Button variant="outline" onClick={resetTableColumns}>
+              恢复默认
+            </Button>
+            <Button onClick={confirmTableColumns}>
+              确认
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            自定义列表显示列、表头名称与列顺序，设置会保存在本浏览器。可拖动手柄调整列顺序；勾选框、图片和操作列固定显示。
+          </p>
+          <ColumnSettingsPanel
+            columns={tableColumnsDraft}
+            isAllSelected={isAllTableSelected}
+            onToggle={toggleTableColumn}
+            onUpdateHeader={updateTableHeader}
+            onToggleAll={toggleTableSelectAll}
+            onReorder={reorderTableColumns}
+          />
+        </div>
+      </Modal>
+
       {/* Export Modal */}
       <Modal
         isOpen={isExportOpen}
@@ -1913,6 +2283,9 @@ export default function Components() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setIsExportOpen(false)} disabled={isExporting}>
               取消
+            </Button>
+            <Button variant="outline" onClick={resetExportColumns} disabled={isExporting}>
+              恢复默认
             </Button>
             <Button onClick={handleExportCSV} disabled={isExporting}>
               {isExporting ? (
@@ -1932,49 +2305,19 @@ export default function Components() {
       >
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            将按当前筛选条件导出全部匹配元件，可自定义导出列与表头名称。
+            将按当前筛选条件导出全部匹配元件，可自定义导出列、表头名称与列顺序。可拖动手柄调整列顺序。
           </p>
           <p className="text-sm text-muted-foreground">
             导出顺序与当前列表排序一致（{currentSortLabel}，{currentSortOrderLabel}）。
           </p>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input
-                type="checkbox"
-                checked={isAllExportSelected}
-                onChange={e => toggleExportSelectAll(e.target.checked)}
-                className="h-4 w-4 rounded border-input"
-              />
-              全选
-            </label>
-            <span className="text-xs text-muted-foreground">
-              已选 {exportColumns.filter(column => column.selected).length} / {exportColumns.length} 列
-            </span>
-          </div>
-          <div className="max-h-[50vh] overflow-auto rounded-md border divide-y">
-            {exportColumns.map(column => {
-              const defaultHeader = EXPORT_COLUMNS.find(item => item.key === column.key)?.defaultHeader || column.key;
-              return (
-                <div key={column.key} className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-3 items-center px-3 py-3">
-                  <label className="flex items-center gap-2 text-sm whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={column.selected}
-                      onChange={e => toggleExportColumn(column.key, e.target.checked)}
-                      className="h-4 w-4 rounded border-input"
-                    />
-                    {defaultHeader}
-                  </label>
-                  <Input
-                    value={column.header}
-                    onChange={e => updateExportHeader(column.key, e.target.value)}
-                    placeholder={defaultHeader}
-                    disabled={!column.selected}
-                  />
-                </div>
-              );
-            })}
-          </div>
+          <ColumnSettingsPanel
+            columns={exportColumnsDraft}
+            isAllSelected={isAllExportSelected}
+            onToggle={toggleExportColumn}
+            onUpdateHeader={updateExportHeader}
+            onToggleAll={toggleExportSelectAll}
+            onReorder={reorderExportColumns}
+          />
         </div>
       </Modal>
 
