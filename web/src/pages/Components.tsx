@@ -20,12 +20,56 @@ import {
   stockLogIconClass,
 } from '../utils/stockLog';
 
+type ComponentSearchFilters = {
+  component_number: string;
+  name: string;
+  model: string;
+  manufacturer: string;
+  value: string;
+  supplier: string;
+  supplier_part_number: string;
+};
+
 type ComponentSearchParams = {
   page: number;
   page_size: number;
-  keyword?: string;
   category_id?: string;
+  component_number?: string;
+  name?: string;
+  model?: string;
+  manufacturer?: string;
+  value?: string;
+  supplier?: string;
+  supplier_part_number?: string;
 };
+
+const EMPTY_SEARCH_FILTERS: ComponentSearchFilters = {
+  component_number: '',
+  name: '',
+  model: '',
+  manufacturer: '',
+  value: '',
+  supplier: '',
+  supplier_part_number: '',
+};
+
+const SEARCH_FILTER_FIELDS: { key: keyof ComponentSearchFilters; label: string; placeholder: string }[] = [
+  { key: 'component_number', label: '编号', placeholder: 'HB-000001' },
+  { key: 'name', label: '名称', placeholder: '元件名称' },
+  { key: 'model', label: '厂家型号', placeholder: 'RC0603FR-0710KL' },
+  { key: 'value', label: '参数', placeholder: '10k（空格拆词）' },
+  { key: 'supplier_part_number', label: '料号', placeholder: 'C2040' },
+];
+
+const SEARCH_PARAM_KEYS: (keyof ComponentSearchFilters)[] = [
+  'component_number',
+  'name',
+  'model',
+  'manufacturer',
+  'value',
+  'supplier',
+  'supplier_part_number',
+];
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -51,8 +95,13 @@ export default function Components() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
+  const [searchFilters, setSearchFilters] = useState<ComponentSearchFilters>(EMPTY_SEARCH_FILTERS);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [categorySearchInput, setCategorySearchInput] = useState('');
+  const [manufacturerOptions, setManufacturerOptions] = useState<string[]>([]);
+  const [showSearchManufacturerDropdown, setShowSearchManufacturerDropdown] = useState(false);
+  const [showSearchSupplierDropdown, setShowSearchSupplierDropdown] = useState(false);
+  const [showSearchCategoryDropdown, setShowSearchCategoryDropdown] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isBatchLocationOpen, setIsBatchLocationOpen] = useState(false);
   const [batchLocation, setBatchLocation] = useState('');
@@ -151,12 +200,30 @@ export default function Components() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const fetchComponents = async (page = 1, pageSize = pagination.page_size) => {
+  const resolveCategoryId = (categoryInput: string, categoryId: string): string => {
+    if (categoryId) return categoryId;
+    const name = categoryInput.trim();
+    if (!name) return '';
+    const found = categories.find(c => c.name.toLowerCase() === name.toLowerCase());
+    return found ? String(found.id) : '';
+  };
+
+  const fetchComponents = async (
+    page = 1,
+    pageSize = pagination.page_size,
+    filters: ComponentSearchFilters = searchFilters,
+    categoryInput: string = categorySearchInput,
+    categoryId: string = selectedCategory,
+  ) => {
     setLoading(true);
     try {
       const params: ComponentSearchParams = { page, page_size: pageSize };
-      if (search) params.keyword = search;
-      if (selectedCategory) params.category_id = selectedCategory;
+      const resolvedCategoryId = resolveCategoryId(categoryInput, categoryId);
+      if (resolvedCategoryId) params.category_id = resolvedCategoryId;
+      for (const key of SEARCH_PARAM_KEYS) {
+        const value = filters[key].trim();
+        if (value) params[key] = value;
+      }
 
       const res = await client.get('/components', { params });
       setComponents(res.data.data || []);
@@ -193,6 +260,7 @@ export default function Components() {
       const options = res.data.data as ComponentOptions;
       setPackageOptions(options.packages || []);
       setLocationOptions(options.locations || []);
+      setManufacturerOptions(options.manufacturers || []);
     } catch {
       toast.error('加载历史选项失败');
     }
@@ -208,6 +276,64 @@ export default function Components() {
   const handleSearch = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
     fetchComponents(1, pagination.page_size);
+  };
+
+  const handleClearFilters = () => {
+    setSearchFilters(EMPTY_SEARCH_FILTERS);
+    setSelectedCategory('');
+    setCategorySearchInput('');
+    setPagination(prev => ({ ...prev, page: 1 }));
+    fetchComponents(1, pagination.page_size, EMPTY_SEARCH_FILTERS, '', '');
+  };
+
+  const hasActiveFilters =
+    selectedCategory !== '' ||
+    categorySearchInput.trim() !== '' ||
+    SEARCH_PARAM_KEYS.some(key => searchFilters[key].trim() !== '');
+
+  const handleSearchFilterChange = (key: keyof ComponentSearchFilters, value: string) => {
+    setSearchFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleCategorySearchInputChange = (value: string) => {
+    setCategorySearchInput(value);
+    const matched = categories.find(c => c.name.toLowerCase() === value.trim().toLowerCase());
+    setSelectedCategory(matched ? String(matched.id) : '');
+  };
+
+  const filteredManufacturerOptions = manufacturerOptions.filter(option =>
+    option.toLowerCase().includes(searchFilters.manufacturer.toLowerCase())
+  );
+
+  const filteredSupplierOptions = suppliers.filter(s =>
+    s.name.toLowerCase().includes(searchFilters.supplier.toLowerCase())
+  );
+
+  const filteredCategoryOptions = categories.filter(c =>
+    c.name.toLowerCase().includes(categorySearchInput.toLowerCase())
+  );
+
+  const renderSearchField = (key: keyof ComponentSearchFilters) => {
+    const field = SEARCH_FILTER_FIELDS.find(item => item.key === key);
+    if (!field) return null;
+    return (
+      <div key={field.key} className="space-y-1">
+        <Label htmlFor={`search-${field.key}`} className="text-xs text-muted-foreground">
+          {field.label}
+        </Label>
+        <Input
+          id={`search-${field.key}`}
+          placeholder={field.placeholder}
+          value={searchFilters[field.key]}
+          onChange={e => handleSearchFilterChange(field.key, e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+        />
+      </div>
+    );
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') handleSearch();
   };
 
   const handlePageSizeChange = (pageSize: number) => {
@@ -558,24 +684,131 @@ export default function Components() {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="flex-1 flex gap-2">
-          <Input 
-            placeholder="搜索编号、元件、厂家型号、制造商、参数、供应商或料号..." 
-            value={search} 
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSearch()}
-          />
-          <Button onClick={handleSearch} variant="secondary"><Search className="h-4 w-4" /></Button>
+      <div className="rounded-md border p-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {renderSearchField('component_number')}
+          {renderSearchField('name')}
+          {renderSearchField('model')}
+          <div className="space-y-1">
+            <Label htmlFor="search-manufacturer" className="text-xs text-muted-foreground">制造商</Label>
+            <div className="relative">
+              <Input
+                id="search-manufacturer"
+                placeholder="YAGEO"
+                value={searchFilters.manufacturer}
+                onChange={e => handleSearchFilterChange('manufacturer', e.target.value)}
+                onFocus={() => setShowSearchManufacturerDropdown(true)}
+                onBlur={() => setTimeout(() => setShowSearchManufacturerDropdown(false), 200)}
+                onKeyDown={handleSearchKeyDown}
+              />
+              {showSearchManufacturerDropdown && (
+                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                  {filteredManufacturerOptions.map(option => (
+                    <div
+                      key={option}
+                      className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => {
+                        handleSearchFilterChange('manufacturer', option);
+                        setShowSearchManufacturerDropdown(false);
+                      }}
+                    >
+                      {option}
+                    </div>
+                  ))}
+                  {filteredManufacturerOptions.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      {searchFilters.manufacturer ? '无匹配制造商' : '无历史制造商'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {renderSearchField('value')}
+          <div className="space-y-1">
+            <Label htmlFor="search-supplier" className="text-xs text-muted-foreground">供应商</Label>
+            <div className="relative">
+              <Input
+                id="search-supplier"
+                placeholder="嘉立创"
+                value={searchFilters.supplier}
+                onChange={e => handleSearchFilterChange('supplier', e.target.value)}
+                onFocus={() => setShowSearchSupplierDropdown(true)}
+                onBlur={() => setTimeout(() => setShowSearchSupplierDropdown(false), 200)}
+                onKeyDown={handleSearchKeyDown}
+              />
+              {showSearchSupplierDropdown && (
+                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                  {filteredSupplierOptions.map(s => (
+                    <div
+                      key={s.id}
+                      className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => {
+                        handleSearchFilterChange('supplier', s.name);
+                        setShowSearchSupplierDropdown(false);
+                      }}
+                    >
+                      {s.name}
+                    </div>
+                  ))}
+                  {filteredSupplierOptions.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      {searchFilters.supplier ? '无匹配供应商' : '无供应商'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {renderSearchField('supplier_part_number')}
+          <div className="space-y-1">
+            <Label htmlFor="search-category" className="text-xs text-muted-foreground">分类</Label>
+            <div className="relative">
+              <Input
+                id="search-category"
+                placeholder="输入或选择分类"
+                value={categorySearchInput}
+                onChange={e => handleCategorySearchInputChange(e.target.value)}
+                onFocus={() => setShowSearchCategoryDropdown(true)}
+                onBlur={() => setTimeout(() => setShowSearchCategoryDropdown(false), 200)}
+                onKeyDown={handleSearchKeyDown}
+              />
+              {showSearchCategoryDropdown && (
+                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
+                  {filteredCategoryOptions.map(c => (
+                    <div
+                      key={c.id}
+                      className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => {
+                        setCategorySearchInput(c.name);
+                        setSelectedCategory(String(c.id));
+                        setShowSearchCategoryDropdown(false);
+                        setTimeout(() => handleSearch(), 0);
+                      }}
+                    >
+                      {c.name}
+                    </div>
+                  ))}
+                  {filteredCategoryOptions.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      {categorySearchInput ? '无匹配分类' : '无分类'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-        <select 
-          className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          value={selectedCategory}
-          onChange={e => { setSelectedCategory(e.target.value); setTimeout(() => handleSearch(), 0); }}
-        >
-          <option value="">所有分类</option>
-          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+          <div className="flex gap-2 sm:ml-auto">
+            <Button onClick={handleSearch} variant="secondary">
+              <Search className="h-4 w-4 mr-2" />搜索
+            </Button>
+            {hasActiveFilters && (
+              <Button onClick={handleClearFilters} variant="outline">清空筛选</Button>
+            )}
+          </div>
+        </div>
       </div>
 
       {selectedIds.length > 0 && (

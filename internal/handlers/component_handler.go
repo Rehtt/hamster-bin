@@ -34,7 +34,8 @@ func NewComponentHandler(db *gorm.DB) *ComponentHandler {
 }
 
 // GetAll 获取所有元件（支持分页和搜索）
-// @route GET /api/v1/components?page=1&page_size=20&keyword=ESP32&category_id=1
+// @route GET /api/v1/components?page=1&page_size=20&manufacturer=YAGEO&value=10k&category_id=1
+// 分字段 query：component_number、name、model、manufacturer、value、supplier、supplier_part_number；各字段内空格拆词 AND，字段间 AND。keyword 仍兼容旧客户端。
 func (h *ComponentHandler) GetAll(c *gin.Context) {
 	var query repository.ComponentQuery
 
@@ -52,6 +53,13 @@ func (h *ComponentHandler) GetAll(c *gin.Context) {
 	}
 
 	query.Keyword = c.Query("keyword")
+	query.ComponentNumber = c.Query("component_number")
+	query.Name = c.Query("name")
+	query.Model = c.Query("model")
+	query.Manufacturer = c.Query("manufacturer")
+	query.Value = c.Query("value")
+	query.SupplierName = c.Query("supplier")
+	query.SupplierPartNumber = c.Query("supplier_part_number")
 
 	if categoryID := c.Query("category_id"); categoryID != "" {
 		id, err := strconv.ParseUint(categoryID, 10, 32)
@@ -78,7 +86,7 @@ func (h *ComponentHandler) GetAll(c *gin.Context) {
 	})
 }
 
-// GetOptions 获取元件录入表单的历史选项（封装、位置）
+// GetOptions 获取元件录入表单的历史选项（封装、位置、制造商）
 // @route GET /api/v1/components/options
 func (h *ComponentHandler) GetOptions(c *gin.Context) {
 	packages, err := h.componentRepo.GetDistinctPackages()
@@ -93,10 +101,17 @@ func (h *ComponentHandler) GetOptions(c *gin.Context) {
 		return
 	}
 
+	manufacturers, err := h.componentRepo.GetDistinctManufacturers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取制造商选项失败"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"packages":  packages,
-			"locations": locations,
+			"packages":      packages,
+			"locations":     locations,
+			"manufacturers": manufacturers,
 		},
 	})
 }

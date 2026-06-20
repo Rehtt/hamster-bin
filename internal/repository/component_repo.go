@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
 	"github.com/Rehtt/hamster-bin/internal/price"
@@ -20,10 +21,39 @@ func NewComponentRepository(db *gorm.DB) *ComponentRepository {
 
 // Query 查询参数
 type ComponentQuery struct {
-	CategoryID *uint
-	Keyword    string
-	Page       int
-	PageSize   int
+	CategoryID         *uint
+	Keyword            string
+	ComponentNumber    string
+	Name               string
+	Model              string
+	Manufacturer       string
+	Value              string
+	SupplierName       string
+	SupplierPartNumber string
+	Page               int
+	PageSize           int
+}
+
+func applyColumnLikeTokens(db *gorm.DB, column, raw string) *gorm.DB {
+	for _, token := range strings.Fields(raw) {
+		db = db.Where(column+" LIKE ?", "%"+token+"%")
+	}
+	return db
+}
+
+func applyKeywordTokens(db *gorm.DB, keyword string) *gorm.DB {
+	for _, token := range strings.Fields(keyword) {
+		pattern := "%" + token + "%"
+		db = db.Where(
+			"components.name LIKE ? OR components.component_number LIKE ? OR components.model LIKE ? OR components.manufacturer LIKE ? OR components.value LIKE ? OR components.supplier_part_number LIKE ? OR components.description LIKE ? OR suppliers.name LIKE ?",
+			pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern,
+		)
+	}
+	return db
+}
+
+func needsSupplierJoin(query ComponentQuery) bool {
+	return query.SupplierName != "" || query.Keyword != ""
 }
 
 // GetAll 获取所有元件（支持分页和搜索）
@@ -38,12 +68,20 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 		db = db.Where("category_id = ?", *query.CategoryID)
 	}
 
-	// 关键词搜索
+	if needsSupplierJoin(query) {
+		db = db.Joins("LEFT JOIN suppliers ON suppliers.id = components.supplier_id")
+	}
+
+	db = applyColumnLikeTokens(db, "components.component_number", query.ComponentNumber)
+	db = applyColumnLikeTokens(db, "components.name", query.Name)
+	db = applyColumnLikeTokens(db, "components.model", query.Model)
+	db = applyColumnLikeTokens(db, "components.manufacturer", query.Manufacturer)
+	db = applyColumnLikeTokens(db, "components.value", query.Value)
+	db = applyColumnLikeTokens(db, "suppliers.name", query.SupplierName)
+	db = applyColumnLikeTokens(db, "components.supplier_part_number", query.SupplierPartNumber)
+
 	if query.Keyword != "" {
-		keyword := "%" + query.Keyword + "%"
-		db = db.Joins("LEFT JOIN suppliers ON suppliers.id = components.supplier_id").
-			Where("components.name LIKE ? OR components.component_number LIKE ? OR components.model LIKE ? OR components.manufacturer LIKE ? OR value LIKE ? OR supplier_part_number LIKE ? OR description LIKE ? OR suppliers.name LIKE ?",
-				keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword)
+		db = applyKeywordTokens(db, query.Keyword)
 	}
 
 	// 计算总数
@@ -55,7 +93,7 @@ func (r *ComponentRepository) GetAll(query ComponentQuery) ([]models.Component, 
 		db = db.Offset(offset).Limit(query.PageSize)
 	}
 
-	err := db.Order("updated_at DESC").Find(&components).Error
+	err := db.Order("components.updated_at DESC").Find(&components).Error
 	return components, total, err
 }
 
@@ -185,4 +223,15 @@ func (r *ComponentRepository) GetDistinctLocations() ([]string, error) {
 		Order("location ASC").
 		Pluck("location", &locations).Error
 	return locations, err
+}
+
+// GetDistinctManufacturers 获取历史制造商列表（去重、非空、按名称排序）
+func (r *ComponentRepository) GetDistinctManufacturers() ([]string, error) {
+	var manufacturers []string
+	err := r.db.Model(&models.Component{}).
+		Where("manufacturer <> ''").
+		Distinct("manufacturer").
+		Order("manufacturer ASC").
+		Pluck("manufacturer", &manufacturers).Error
+	return manufacturers, err
 }

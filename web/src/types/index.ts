@@ -63,4 +63,5 @@ export interface Platform {
 export interface ComponentOptions {
   packages: string[];
   locations: string[];
+  manufacturers: string[];
 }
