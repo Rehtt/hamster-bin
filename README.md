@@ -111,6 +111,40 @@ go build -ldflags="-s -w -X github.com/Rehtt/hamster-bin/internal/version.Versio
 ./hamster-bin --version
 ```
 
+## Docker 部署
+
+Release 版本会发布到 GitHub Container Registry，镜像地址为 `ghcr.io/rehtt/hamster-bin`，支持 `linux/amd64` 与 `linux/arm64`。
+
+拉取并运行：
+
+```bash
+docker pull ghcr.io/rehtt/hamster-bin:latest
+docker run -d \
+  --name hamster-bin \
+  -p 8080:8080 \
+  -v hamster-data:/app/data \
+  ghcr.io/rehtt/hamster-bin:latest
+```
+
+容器内默认数据目录为 `/app/data`（数据库 `/app/data/inventory.db`，图片 `/app/data/images`）。可通过 `-e` 传入环境变量，例如启用登录鉴权：
+
+```bash
+docker run -d \
+  --name hamster-bin \
+  -p 8080:8080 \
+  -v hamster-data:/app/data \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD='your-strong-password' \
+  -e JWT_SECRET='random-32+-char-secret' \
+  ghcr.io/rehtt/hamster-bin:v1.0.0
+```
+
+本地从源码构建镜像：
+
+```bash
+docker build --build-arg VERSION=v1.0.0 -t hamster-bin:local .
+```
+
 ## 配置说明
 
 所有配置均通过环境变量提供。
@@ -204,7 +238,7 @@ go test . ./cmd/... ./internal/...
 
 ## 发布
 
-项目在推送 `v*` 格式的 Git tag 时触发 GitHub Actions 发布流程。发布流程会安装前端依赖、构建 `web/dist`、运行后端测试，并生成 Linux、Windows 和 macOS 的二进制文件。
+项目在推送 `v*` 格式的 Git tag 时触发 GitHub Actions 发布流程。发布流程会安装前端依赖、构建 `web/dist`、运行后端测试，并生成 Linux、Windows 和 macOS 的二进制文件；同时构建多架构 Docker 镜像并推送到 `ghcr.io/rehtt/hamster-bin`（tag 为版本号与 `latest`）。
 
 ```bash
 git tag v1.0.0
