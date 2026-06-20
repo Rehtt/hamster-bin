@@ -576,7 +576,8 @@ export default function Components() {
     nextSortBy: ExportColumnKey = sortBy,
     nextSortOrder: ComponentSortOrder = sortOrder,
   ) => {
-    setLoading(true);
+    const showLoading = components.length === 0;
+    if (showLoading) setLoading(true);
     try {
       const params: ComponentSearchParams = {
         page,
@@ -598,7 +599,7 @@ export default function Components() {
     } catch {
       toast.error('加载元件失败');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
@@ -1500,7 +1501,7 @@ export default function Components() {
               </tr>
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
-              {loading ? (
+              {loading && components.length === 0 ? (
                 <tr><td colSpan={2 + visibleTableColumns.length + 1} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
                 <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">

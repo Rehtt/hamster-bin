@@ -67,3 +67,18 @@ export interface ComponentOptions {
   locations: string[];
   manufacturers: string[];
 }
+
+export type StatsRange = 'month' | 'quarter' | 'all';
+
+export interface DashboardStats {
+  range: StatsRange;
+  range_start: string | null;
+  range_end: string | null;
+  component_count: number;
+  category_count: number;
+  total_stock: number;
+  inventory_value_cents: number;
+  inbound_quantity: number;
+  outbound_quantity: number;
+  inbound_cost_cents: number;
+}

@@ -35,6 +35,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config)
 	supplierHandler := handlers.NewSupplierHandler(db)
 	componentHandler := handlers.NewComponentHandler(db)
 	stockLogHandler := handlers.NewStockLogHandler(db)
+	statsHandler := handlers.NewStatsHandler(db)
 	parserHandler := handlers.NewParserHandler(parserManager)
 	authHandler := handlers.NewAuthHandler(cfg)
 	authMiddleware := middleware.AuthMiddleware(cfg)
@@ -103,6 +104,8 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config)
 				stockLogs.GET("", stockLogHandler.GetAll)
 				stockLogs.POST("/:id/revoke", stockLogHandler.Revoke)
 			}
+
+			protected.GET("/stats", statsHandler.GetDashboard)
 
 			// 平台支持
 			protected.GET("/platforms", parserHandler.GetSupportedPlatforms)
