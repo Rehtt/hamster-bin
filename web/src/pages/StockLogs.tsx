@@ -13,6 +13,7 @@ import {
   stockLogAmountClass,
   stockLogCardClass,
   stockLogIconClass,
+  formatStockLogChangeAmount,
 } from '../utils/stockLog';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
@@ -92,7 +93,7 @@ export default function StockLogs() {
                     </div>
                     <div className="text-right shrink-0">
                         <div className={`font-bold text-lg ${stockLogAmountClass(log)}`}>
-                            {log.change_amount > 0 ? '+' : ''}{log.change_amount}
+                            {formatStockLogChangeAmount(log)}
                         </div>
                         {(log.total_price_cents ?? 0) > 0 && (
                           <div className="text-sm text-foreground">

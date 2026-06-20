@@ -85,6 +85,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config)
 
 				// 库存操作
 				components.POST("/:id/stock", componentHandler.UpdateStock)
+				components.POST("/:id/backfill-price", componentHandler.BackfillPrice)
 				components.GET("/:id/logs", componentHandler.GetStockLogs)
 
 				// 图片处理

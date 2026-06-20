@@ -398,7 +398,6 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	// 2. 将请求数据绑定到现有对象上（支持部分更新）
 	var req struct {
 		models.Component
-		TotalPriceCents *int64 `json:"total_price_cents"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
@@ -412,6 +411,7 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 	// 4. 清除关联对象，防止 GORM 尝试更新关联的分类信息，只更新外键 CategoryID
 	component.Category = nil
 	component.Supplier = nil
+	component.UnitPriceCents = existing.UnitPriceCents
 
 	if err := h.componentRepo.ValidateComponentNumberForUpdate(&component, existing); err != nil {
 		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
@@ -422,36 +422,83 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 		return
 	}
 
-	var backfillTotalPriceCents int64
-	if existing.UnitPriceCents == 0 && req.TotalPriceCents != nil && *req.TotalPriceCents > 0 {
-		if component.StockQuantity <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "库存为 0 时无法补录价格"})
-			return
-		}
-		component.UnitPriceCents = price.UnitPriceCents(*req.TotalPriceCents, component.StockQuantity)
-		backfillTotalPriceCents = *req.TotalPriceCents
-	} else {
-		component.UnitPriceCents = existing.UnitPriceCents
-	}
-
 	// 5. 保存更新
 	if err := h.componentRepo.Update(&component); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新元件失败"})
 		return
 	}
 
-	if backfillTotalPriceCents > 0 {
-		log := models.StockLog{
-			ComponentID:     component.ID,
-			ChangeAmount:    0,
-			UnitPriceCents:  component.UnitPriceCents,
-			TotalPriceCents: backfillTotalPriceCents,
-			Reason:          "补录价格",
-		}
-		if err := h.stockLogRepo.Create(&log); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建补录价格记录失败"})
-			return
-		}
+	componentPtr, err := h.componentRepo.GetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取更新后元件失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": componentPtr})
+}
+
+// BackfillPrice 补录价格
+// @route POST /api/v1/components/:id/backfill-price
+// Body: {"total_price_cents": 1234, "quantity": 100}
+func (h *ComponentHandler) BackfillPrice(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的ID"})
+		return
+	}
+
+	var req struct {
+		TotalPriceCents int64 `json:"total_price_cents" binding:"required"`
+		Quantity        int   `json:"quantity" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		return
+	}
+	if req.Quantity <= 0 || req.TotalPriceCents <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "采购数量和总价必须大于 0"})
+		return
+	}
+
+	existing, err := h.componentRepo.GetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "元件不存在"})
+		return
+	}
+
+	batchUnitPrice := price.UnitPriceCents(req.TotalPriceCents, req.Quantity)
+	var newUnitPrice int64
+	if existing.UnitPriceCents == 0 {
+		newUnitPrice = batchUnitPrice
+	} else {
+		newUnitPrice = price.WeightedAverageUnitPriceCents(
+			existing.StockQuantity,
+			existing.UnitPriceCents,
+			req.Quantity,
+			req.TotalPriceCents,
+		)
+	}
+
+	component := *existing
+	component.UnitPriceCents = newUnitPrice
+	component.Category = nil
+	component.Supplier = nil
+
+	if err := h.componentRepo.Update(&component); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新参考单价失败"})
+		return
+	}
+
+	log := models.StockLog{
+		ComponentID:     component.ID,
+		ChangeAmount:    0,
+		UnitPriceCents:  batchUnitPrice,
+		TotalPriceCents: req.TotalPriceCents,
+		Reason:          fmt.Sprintf("补录价格（采购 %d 件）", req.Quantity),
+	}
+	if err := h.stockLogRepo.Create(&log); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建补录价格记录失败"})
+		return
 	}
 
 	componentPtr, err := h.componentRepo.GetByID(uint(id))

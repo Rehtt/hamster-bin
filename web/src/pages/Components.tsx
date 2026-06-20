@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, useRef } from 'react';
-import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download, Coins } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
@@ -17,6 +17,9 @@ import {
   stockLogAmountClass,
   stockLogCardClass,
   stockLogIconClass,
+  formatStockLogChangeAmount,
+  stockLogIconLabel,
+  isBackfillLog,
 } from '../utils/stockLog';
 
 type ComponentSearchFilters = {
@@ -212,6 +215,7 @@ export default function Components() {
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isStockOpen, setIsStockOpen] = useState(false);
+  const [isBackfillOpen, setIsBackfillOpen] = useState(false);
   const [isLogsOpen, setIsLogsOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -243,6 +247,8 @@ export default function Components() {
 
   // Stock State
   const [stockForm, setStockForm] = useState({ type: 'in', amount: 1, reason: '', totalPriceYuan: '' });
+  const [backfillTarget, setBackfillTarget] = useState<Component | null>(null);
+  const [backfillForm, setBackfillForm] = useState({ totalPriceYuan: '', quantity: 1 });
   
   // Logs State
   const [componentLogs, setComponentLogs] = useState<StockLog[]>([]);
@@ -719,16 +725,9 @@ export default function Components() {
         stock_quantity: Number(formData.stock_quantity)
       };
 
-      const qty = Number(formData.stock_quantity);
       const totalPriceCents = yuanToCents(formTotalPriceYuan);
-      const canSetPrice = totalPriceCents > 0 && qty > 0;
-      const isBackfill = !!editingComponent && (editingComponent.unit_price_cents ?? 0) === 0;
-
-      if ((!editingComponent || isBackfill) && canSetPrice) {
+      if (!editingComponent && Number(formData.stock_quantity) > 0 && totalPriceCents > 0) {
         data.total_price_cents = totalPriceCents;
-      } else if (isBackfill && totalPriceCents > 0 && qty <= 0) {
-        toast.error('库存为 0 时无法补录价格');
-        return;
       }
 
       let savedId = editingComponent?.id;
@@ -792,6 +791,40 @@ export default function Components() {
     setEditingComponent(component);
     setStockForm({ type: 'in', amount: 1, reason: '', totalPriceYuan: '' });
     setIsStockOpen(true);
+  };
+
+  const openBackfill = (component: Component) => {
+    setBackfillTarget(component);
+    setBackfillForm({
+      totalPriceYuan: '',
+      quantity: component.stock_quantity > 0 ? component.stock_quantity : 1,
+    });
+    setIsBackfillOpen(true);
+  };
+
+  const handleBackfillSubmit = async () => {
+    if (!backfillTarget) return;
+    const totalPriceCents = yuanToCents(backfillForm.totalPriceYuan);
+    if (totalPriceCents <= 0) {
+      toast.error('请输入采购总价');
+      return;
+    }
+    if (backfillForm.quantity <= 0) {
+      toast.error('采购数量必须大于 0');
+      return;
+    }
+    try {
+      await client.post(`/components/${backfillTarget.id}/backfill-price`, {
+        total_price_cents: totalPriceCents,
+        quantity: backfillForm.quantity,
+      });
+      toast.success('补录价格成功');
+      setIsBackfillOpen(false);
+      fetchComponents(pagination.page, pagination.page_size);
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      toast.error(err.response?.data?.error || '补录失败');
+    }
   };
 
   const handleStockSubmit = async () => {
@@ -1166,6 +1199,7 @@ export default function Components() {
                     <div className="flex gap-2">
                         <Button variant="ghost" size="icon" onClick={() => openForm(component)} title="编辑"><Edit className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openStock(component)} title="库存"><Database className="h-4 w-4 text-blue-500" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openBackfill(component)} title="补录价格"><Coins className="h-4 w-4 text-amber-600" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openLogs(component)} title="记录"><History className="h-4 w-4 text-gray-500" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => handleDelete(component.id)} title="删除" className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
                     </div>
@@ -1504,7 +1538,7 @@ export default function Components() {
                         </Button>
                     </div>
                 </div>
-                {(!editingComponent || (editingComponent && (editingComponent.unit_price_cents ?? 0) === 0)) && (
+                {!editingComponent && (
                   <div className="space-y-2">
                     <Label>采购总价（元）</Label>
                     <Input
@@ -1671,6 +1705,71 @@ export default function Components() {
         </div>
       </Modal>
 
+      {/* Backfill Price Modal */}
+      <Modal
+        isOpen={isBackfillOpen}
+        onClose={() => setIsBackfillOpen(false)}
+        title={backfillTarget ? `补录价格 · ${backfillTarget.name}` : '补录价格'}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setIsBackfillOpen(false)}>取消</Button>
+            <Button onClick={handleBackfillSubmit}>确认</Button>
+          </>
+        }
+      >
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label>采购总价（元）</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={backfillForm.totalPriceYuan}
+              onChange={e => setBackfillForm({ ...backfillForm, totalPriceYuan: e.target.value })}
+              placeholder="本次采购总价"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>采购数量</Label>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 shrink-0"
+                onClick={() => setBackfillForm(prev => ({ ...prev, quantity: Math.max(1, prev.quantity - 1) }))}
+              >
+                <Minus className="h-4 w-4" />
+              </Button>
+              <Input
+                type="number"
+                min="1"
+                value={backfillForm.quantity}
+                onChange={e => setBackfillForm({ ...backfillForm, quantity: Number(e.target.value) })}
+                className="text-center"
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 shrink-0"
+                onClick={() => setBackfillForm(prev => ({ ...prev, quantity: prev.quantity + 1 }))}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          {backfillForm.quantity > 0 && backfillForm.totalPriceYuan && yuanToCents(backfillForm.totalPriceYuan) > 0 && (
+            <p className="text-xs text-muted-foreground">
+              分摊单价：{formatCents(calcUnitPriceCents(yuanToCents(backfillForm.totalPriceYuan), backfillForm.quantity))}
+            </p>
+          )}
+          {(backfillTarget?.unit_price_cents ?? 0) > 0 && (
+            <p className="text-xs text-muted-foreground">
+              当前参考单价：{formatCents(backfillTarget!.unit_price_cents)}，补录后将按加权平均更新
+            </p>
+          )}
+        </div>
+      </Modal>
+
       {/* Stock Modal */}
       <Modal
         isOpen={isStockOpen}
@@ -1758,11 +1857,11 @@ export default function Components() {
                  <div key={log.id} className={`flex justify-between items-center p-3 rounded-lg bg-secondary/10 gap-3 ${stockLogCardClass(log)}`}>
                      <div className="flex items-center gap-3 min-w-0">
                          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${stockLogIconClass(log)}`}>
-                             {log.change_amount > 0 ? '+' : '-'}
+                             {stockLogIconLabel(log)}
                          </div>
                          <div className="min-w-0">
                              <div className="flex items-center gap-2 flex-wrap">
-                               <span className="font-medium">{Math.abs(log.change_amount)}</span>
+                               <span className="font-medium">{isBackfillLog(log) ? '补录' : Math.abs(log.change_amount)}</span>
                                {isRevoked(log) && (
                                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">已撤销</span>
                                )}
@@ -1775,7 +1874,7 @@ export default function Components() {
                      </div>
                      <div className="text-sm text-right shrink-0">
                        <div className={`font-medium ${stockLogAmountClass(log)}`}>
-                         {log.change_amount > 0 ? '+' : ''}{log.change_amount}
+                         {formatStockLogChangeAmount(log)}
                        </div>
                        {(log.total_price_cents ?? 0) > 0 && (
                          <div className="text-foreground">
