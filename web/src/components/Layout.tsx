@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Package, FolderTree, History, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, Package, FolderTree, History, Menu, X, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { useAuth } from '../context/AuthContext';
 
 const SIDEBAR_COLLAPSED_KEY = 'hamster-sidebar-collapsed';
 
@@ -18,6 +19,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
   );
   const location = useLocation();
+  const navigate = useNavigate();
+  const { authEnabled, isAuthenticated, username, logout } = useAuth();
+  const showLogout = authEnabled && isAuthenticated;
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   const toggleCollapsed = () => {
     setIsCollapsed((prev) => {
@@ -82,6 +91,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
+        {showLogout && (
+          <div className={cn("border-t border-border p-4", isCollapsed && "md:px-2")}>
+            {!isCollapsed && username && (
+              <p className="mb-3 text-xs text-muted-foreground truncate">已登录：{username}</p>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              title={isCollapsed ? '退出登录' : undefined}
+              className={cn(
+                "flex w-full items-center gap-3 px-3 py-2 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground text-muted-foreground",
+                isCollapsed && "md:justify-center md:px-2 md:gap-0"
+              )}
+            >
+              <LogOut className="h-5 w-5 shrink-0" />
+              <span className={cn(isCollapsed && "md:hidden")}>退出登录</span>
+            </button>
+          </div>
+        )}
         <button
           type="button"
           onClick={toggleCollapsed}

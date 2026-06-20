@@ -533,7 +533,9 @@ export default function Components() {
           .join(','),
       );
 
-      const response = await fetch(`/api/v1/components/export?${params.toString()}`);
+      const response = await fetch(`/api/v1/components/export?${params.toString()}`, {
+        credentials: 'include',
+      });
       if (!response.ok) {
         const data = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(data?.error || '导出失败');

@@ -1,6 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import { AuthProvider } from './context/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Components from './pages/Components';
 import Categories from './pages/Categories';
@@ -8,17 +11,29 @@ import StockLogs from './pages/StockLogs';
 
 function App() {
   return (
-    <Router>
-      <Layout>
+    <AuthProvider>
+      <Router>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/components" element={<Components />} />
-          <Route path="/categories" element={<Categories />} />
-          <Route path="/logs" element={<StockLogs />} />
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/components" element={<Components />} />
+                    <Route path="/categories" element={<Categories />} />
+                    <Route path="/logs" element={<StockLogs />} />
+                  </Routes>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
         </Routes>
-      </Layout>
-      <Toaster position="top-right" />
-    </Router>
+        <Toaster position="top-right" />
+      </Router>
+    </AuthProvider>
   );
 }
 

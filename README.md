@@ -98,6 +98,19 @@ npm run dev
 | `WEB_DIR` | `./web/dist` | 前端构建产物目录 |
 | `IMAGE_DIR` | `./data/images` | 图片存储目录 |
 | `LOG_LEVEL` | `info` | 日志级别 |
+| `ADMIN_USERNAME` | （空） | 管理员用户名；与 `ADMIN_PASSWORD` 同时设置时启用登录鉴权 |
+| `ADMIN_PASSWORD` | （空） | 管理员密码 |
+| `JWT_SECRET` | （空） | JWT 签名密钥；启用鉴权时必填 |
+| `JWT_EXPIRE_HOURS` | `168` | JWT 有效期（小时） |
+
+启用鉴权示例：
+
+```bash
+export ADMIN_USERNAME=admin
+export ADMIN_PASSWORD='your-strong-password'
+export JWT_SECRET='random-32+-char-secret'
+./hamster-bin
+```
 
 ## 🤝 贡献
 欢迎提交 Issue 和 Pull Request！
