@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { useRef } from 'react';
+import { lazy, Suspense, useEffect, useState, useRef } from 'react';
 import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
@@ -8,8 +7,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
-import QRScanner from '../components/QRScanner';
-import CameraCapture from '../components/CameraCapture';
+const QRScanner = lazy(() => import('../components/QRScanner'));
+const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, calcUnitPriceCents, calcTotalPriceCents } from '../utils/price';
 import {
   canRevoke,
@@ -1840,13 +1839,31 @@ export default function Components() {
 
       {/* Scanner Modal */}
       <Modal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} title="扫描二维码">
-        <QRScanner onScan={handleScan} onClose={() => setIsScannerOpen(false)} autoStart={isMobile} />
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            </div>
+          }
+        >
+          <QRScanner onScan={handleScan} onClose={() => setIsScannerOpen(false)} autoStart={isMobile} />
+        </Suspense>
       </Modal>
 
       {/* Camera Modal */}
       <Modal isOpen={isCameraOpen} onClose={() => setIsCameraOpen(false)} title="拍摄图片" className="max-w-md">
         <div className="h-[60vh] md:h-[500px]">
-            {isCameraOpen && <CameraCapture onCapture={handleCapture} onClose={() => setIsCameraOpen(false)} />}
+          {isCameraOpen && (
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center">
+                  <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                </div>
+              }
+            >
+              <CameraCapture onCapture={handleCapture} onClose={() => setIsCameraOpen(false)} />
+            </Suspense>
+          )}
         </div>
       </Modal>
 

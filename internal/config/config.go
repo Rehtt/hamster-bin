@@ -10,19 +10,19 @@ const defaultJWTExpireHours = 168
 
 // Config 应用配置
 type Config struct {
-	Port             string
-	DBPath           string
-	ImageDir         string
-	LogLevel         string
-	SSLCert          string
-	SSLKey           string
-	LLMBaseURL       string
-	LLMAPIKey        string
-	LLMModel         string
-	AdminUsername    string
-	AdminPassword    string
-	JWTSecret        string
-	JWTExpireHours   int
+	Port           string
+	DBPath         string
+	ImageDir       string
+	LogLevel       string
+	SSLCert        string
+	SSLKey         string
+	LLMBaseURL     string
+	LLMAPIKey      string
+	LLMModel       string
+	AdminUsername  string
+	AdminPassword  string
+	JWTSecret      string
+	JWTExpireHours int
 }
 
 // Load 加载配置（支持环境变量）
@@ -46,7 +46,7 @@ func Load() *Config {
 		LLMModel:       getEnv("LLM_MODEL", ""),
 		AdminUsername:  getEnv("ADMIN_USERNAME", ""),
 		AdminPassword:  getEnv("ADMIN_PASSWORD", ""),
-		JWTSecret:      getEnv("JWT_SECRET", ""),
+		JWTSecret:      getEnv("JWT_SECRET", "168"),
 		JWTExpireHours: expireHours,
 	}
 

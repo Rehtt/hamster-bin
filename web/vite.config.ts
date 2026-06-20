@@ -17,5 +17,18 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('html5-qrcode')) return 'vendor-qrcode';
+            if (id.includes('react-dom') || id.includes('react-router')) return 'vendor-react';
+            if (id.includes('lucide-react')) return 'vendor-icons';
+          }
+        },
+      },
+    },
+  },
 })
