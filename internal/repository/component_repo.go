@@ -114,10 +114,18 @@ func (r *ComponentRepository) ApplyStockChange(params StockChangeParams) (*model
 			return err
 		}
 
-		if params.Amount > 0 && params.UnitPriceCents > 0 {
-			if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
-				Update("unit_price_cents", params.UnitPriceCents).Error; err != nil {
-				return err
+		if params.Amount > 0 && params.TotalPriceCents > 0 {
+			newUnitPrice := price.WeightedAverageUnitPriceCents(
+				component.StockQuantity,
+				component.UnitPriceCents,
+				params.Amount,
+				params.TotalPriceCents,
+			)
+			if newUnitPrice > 0 {
+				if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
+					Update("unit_price_cents", newUnitPrice).Error; err != nil {
+					return err
+				}
 			}
 		}
 

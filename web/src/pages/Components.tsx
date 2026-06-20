@@ -11,6 +11,14 @@ import { Label } from '../components/ui/Label';
 import QRScanner from '../components/QRScanner';
 import CameraCapture from '../components/CameraCapture';
 import { yuanToCents, formatCents, calcUnitPriceCents, calcTotalPriceCents } from '../utils/price';
+import {
+  canRevoke,
+  isReversal,
+  isRevoked,
+  stockLogAmountClass,
+  stockLogCardClass,
+  stockLogIconClass,
+} from '../utils/stockLog';
 
 type ComponentSearchParams = {
   page: number;
@@ -88,6 +96,7 @@ export default function Components() {
   
   // Logs State
   const [componentLogs, setComponentLogs] = useState<StockLog[]>([]);
+  const [revokingLogId, setRevokingLogId] = useState<number | null>(null);
 
   // Platform Import
   const [platformCode, setPlatformCode] = useState('');
@@ -469,6 +478,30 @@ export default function Components() {
       setComponentLogs(res.data.data || []);
     } catch {
       toast.error('加载记录失败');
+    }
+  };
+
+  const handleRevokeLog = async (log: StockLog) => {
+    if (!confirm('确定撤销此记录？库存将回滚。')) return;
+    setRevokingLogId(log.id);
+    try {
+      await client.post(`/stock-logs/${log.id}/revoke`);
+      toast.success('撤销成功');
+      if (editingComponent) {
+        const [logsRes, compRes] = await Promise.all([
+          client.get(`/components/${editingComponent.id}/logs`),
+          client.get(`/components/${editingComponent.id}`),
+        ]);
+        setComponentLogs(logsRes.data.data || []);
+        const updated = compRes.data.data as Component;
+        setEditingComponent(updated);
+        setComponents(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+      }
+    } catch (error) {
+      const err = error as { response?: { data?: { error?: string } } };
+      toast.error(err.response?.data?.error || '撤销失败');
+    } finally {
+      setRevokingLogId(null);
     }
   };
 
@@ -1235,17 +1268,28 @@ export default function Components() {
          <div className="max-h-[60vh] overflow-auto space-y-4">
             {componentLogs.length === 0 ? <div className="text-center text-muted-foreground py-8">暂无记录</div> : 
              componentLogs.map(log => (
-                 <div key={log.id} className="flex justify-between items-center p-3 rounded-lg bg-secondary/10">
-                     <div className="flex items-center gap-3">
-                         <div className={`w-8 h-8 rounded-full flex items-center justify-center ${log.change_amount > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                 <div key={log.id} className={`flex justify-between items-center p-3 rounded-lg bg-secondary/10 gap-3 ${stockLogCardClass(log)}`}>
+                     <div className="flex items-center gap-3 min-w-0">
+                         <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${stockLogIconClass(log)}`}>
                              {log.change_amount > 0 ? '+' : '-'}
                          </div>
-                         <div>
-                             <div className="font-medium">{Math.abs(log.change_amount)}</div>
+                         <div className="min-w-0">
+                             <div className="flex items-center gap-2 flex-wrap">
+                               <span className="font-medium">{Math.abs(log.change_amount)}</span>
+                               {isRevoked(log) && (
+                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">已撤销</span>
+                               )}
+                               {isReversal(log) && (
+                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">撤销冲销</span>
+                               )}
+                             </div>
                              <div className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</div>
                          </div>
                      </div>
-                     <div className="text-sm text-right">
+                     <div className="text-sm text-right shrink-0">
+                       <div className={`font-medium ${stockLogAmountClass(log)}`}>
+                         {log.change_amount > 0 ? '+' : ''}{log.change_amount}
+                       </div>
                        {(log.total_price_cents ?? 0) > 0 && (
                          <div className="text-foreground">
                            {log.change_amount < 0 ? '成本' : '总价'} {formatCents(log.total_price_cents)}
@@ -1255,6 +1299,17 @@ export default function Components() {
                          </div>
                        )}
                        <div className="text-muted-foreground">{log.reason || '无备注'}</div>
+                       {canRevoke(log) && (
+                         <Button
+                           variant="outline"
+                           size="sm"
+                           className="mt-2"
+                           disabled={revokingLogId === log.id}
+                           onClick={() => void handleRevokeLog(log)}
+                         >
+                           撤销
+                         </Button>
+                       )}
                      </div>
                  </div>
              ))

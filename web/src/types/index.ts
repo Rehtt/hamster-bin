@@ -36,6 +36,8 @@ export interface StockLog {
   unit_price_cents?: number;
   total_price_cents?: number;
   reason: string;
+  revoked_at?: string | null;
+  reversal_of_id?: number | null;
   created_at: string;
   component?: Component;
 }

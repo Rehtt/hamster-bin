@@ -52,7 +52,9 @@ type StockLog struct {
 	UnitPriceCents   int64      `gorm:"default:0" json:"unit_price_cents,omitempty"`         // 分摊单价（分）
 	TotalPriceCents  int64      `gorm:"default:0" json:"total_price_cents,omitempty"`        // 录入总价（分）
 	Reason           string     `gorm:"size:500" json:"reason,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	ReversalOfID     *uint      `gorm:"index" json:"reversal_of_id,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 // TableName 指定表名

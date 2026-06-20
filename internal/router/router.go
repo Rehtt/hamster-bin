@@ -79,6 +79,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager) *gin.Engine {
 		stockLogs := v1.Group("/stock-logs")
 		{
 			stockLogs.GET("", stockLogHandler.GetAll)
+			stockLogs.POST("/:id/revoke", stockLogHandler.Revoke)
 		}
 
 		// 平台支持
