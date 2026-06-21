@@ -27,6 +27,8 @@ import { Label } from '../components/ui/Label';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
+import { copyToClipboard } from '../utils/clipboard';
+import { cn } from '../utils/cn';
 import {
   canRevoke,
   isReversal,
@@ -435,6 +437,29 @@ function ColumnSettingsPanel({
     </>
   );
 }
+
+const renderCopyableCell = (value: string | null | undefined, className?: string) => {
+  const text = value?.trim();
+  if (!text) {
+    return <td className={cn('p-4 align-middle', className)}>-</td>;
+  }
+  return (
+    <td className={cn('p-4 align-middle', className)}>
+      <button
+        type="button"
+        title="点击复制"
+        className="cursor-pointer text-left hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+        onClick={async () => {
+          const ok = await copyToClipboard(text);
+          if (ok) toast.success('已复制');
+          else toast.error('复制失败');
+        }}
+      >
+        {text}
+      </button>
+    </td>
+  );
+};
 
 export default function Components() {
   const [components, setComponents] = useState<Component[]>([]);
@@ -852,11 +877,11 @@ export default function Components() {
   const renderTableCell = (key: ExportColumnKey, component: Component) => {
     switch (key) {
       case 'component_number':
-        return <td className="p-4 align-middle font-mono text-xs">{component.component_number || '-'}</td>;
+        return renderCopyableCell(component.component_number, 'font-mono text-xs');
       case 'name':
         return <td className="p-4 align-middle font-medium">{component.name}</td>;
       case 'model':
-        return <td className="p-4 align-middle">{component.model || '-'}</td>;
+        return renderCopyableCell(component.model);
       case 'manufacturer':
         return <td className="p-4 align-middle">{component.manufacturer || '-'}</td>;
       case 'value':
@@ -893,7 +918,7 @@ export default function Components() {
       case 'supplier':
         return <td className="p-4 align-middle">{component.supplier?.name || '-'}</td>;
       case 'supplier_part_number':
-        return <td className="p-4 align-middle">{component.supplier_part_number || '-'}</td>;
+        return renderCopyableCell(component.supplier_part_number);
       case 'datasheet_url':
         return (
           <td className="p-4 align-middle">
