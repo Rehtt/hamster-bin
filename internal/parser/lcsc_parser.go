@@ -34,7 +34,7 @@ func NewLCSCParser(llmClient ...JSONCompleter) *LCSCParser {
 
 	return &LCSCParser{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 		llm: completer,
 	}

@@ -54,7 +54,7 @@ func NewClient(baseURL, apiKey, model string) *Client {
 		apiKey:  strings.TrimSpace(apiKey),
 		model:   strings.TrimSpace(model),
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 90 * time.Second,
 		},
 	}
 }
