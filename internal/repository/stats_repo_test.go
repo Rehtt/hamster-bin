@@ -74,11 +74,11 @@ func seedStatsFixtures(t *testing.T, db *gorm.DB) (uint, uint) {
 			CreatedAt:       lastMonth,
 		},
 		{
-			ComponentID:    compA.ID,
-			ChangeAmount:   0,
+			ComponentID:     compA.ID,
+			ChangeAmount:    0,
 			TotalPriceCents: 500,
-			Reason:         "补录价格",
-			CreatedAt:      now,
+			Reason:          "补录价格",
+			CreatedAt:       now,
 		},
 	}
 	for i := range logs {

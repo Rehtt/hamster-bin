@@ -32,6 +32,7 @@ WORKDIR /app
 COPY --from=builder /hamster-bin /app/hamster-bin
 
 ENV PORT=8080 \
+    DB_DRIVER=sqlite \
     DB_PATH=/app/data/inventory.db \
     IMAGE_DIR=/app/data/images
 

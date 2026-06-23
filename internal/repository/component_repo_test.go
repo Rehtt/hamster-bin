@@ -42,12 +42,12 @@ func seedComponentFixtures(t *testing.T, db *gorm.DB) {
 			SupplierPartNumber: "C2040",
 		},
 		{
-			CategoryID:      category.ID,
-			Name:            "贴片电容",
-			Manufacturer:    "YAGEO",
-			Value:           "100nF",
-			Model:           "CC0603KRX7R9BB104",
-			Description:     "通用去耦电容",
+			CategoryID:   category.ID,
+			Name:         "贴片电容",
+			Manufacturer: "YAGEO",
+			Value:        "100nF",
+			Model:        "CC0603KRX7R9BB104",
+			Description:  "通用去耦电容",
 		},
 		{
 			CategoryID:   category.ID,

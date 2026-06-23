@@ -23,7 +23,11 @@ func main() {
 	cfg := config.Load()
 
 	// 初始化数据库
-	if err := database.Init(cfg.DBPath); err != nil {
+	if err := database.Init(database.Config{
+		Driver: cfg.DBDriver,
+		DSN:    cfg.DBDSN,
+		Path:   cfg.DBPath,
+	}); err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
 
@@ -42,7 +46,7 @@ func main() {
 	fmt.Printf("🏷️  版本: %s\n", version.Version)
 	fmt.Printf("📡 API地址: http://localhost%s/api/v1\n", addr)
 	fmt.Printf("🌐 Web地址: http://localhost%s\n", addr)
-	fmt.Printf("💾 数据库: %s\n", cfg.DBPath)
+	fmt.Printf("💾 数据库: %s (%s)\n", cfg.DBDriver, cfg.DatabaseDisplay())
 	fmt.Printf("🔌 支持平台: %v\n\n", parserManager.GetAvailableParsers())
 
 	if cfg.SSLCert != "" && cfg.SSLKey != "" {

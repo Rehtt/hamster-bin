@@ -8,9 +8,9 @@ func TestUnitPriceMicro(t *testing.T) {
 		quantity int
 		want     int64
 	}{
-		{1000, 10, 1000000},   // 10元/10件 = 1元/件 = 1,000,000 微元
-		{1005, 10, 1005000},   // 10.05元/10件
-		{50, 100, 5000},       // 0.5元/100件 = 0.005元/件 = 5000 微元
+		{1000, 10, 1000000}, // 10元/10件 = 1元/件 = 1,000,000 微元
+		{1005, 10, 1005000}, // 10.05元/10件
+		{50, 100, 5000},     // 0.5元/100件 = 0.005元/件 = 5000 微元
 		{0, 10, 0},
 		{100, 0, 0},
 	}
@@ -53,12 +53,12 @@ func TestYuanToCents(t *testing.T) {
 
 func TestWeightedAverageUnitPriceMicro(t *testing.T) {
 	tests := []struct {
-		name          string
-		oldQty        int
-		oldUnitMicro  int64
-		inQty         int
-		inTotalCents  int64
-		want          int64
+		name         string
+		oldQty       int
+		oldUnitMicro int64
+		inQty        int
+		inTotalCents int64
+		want         int64
 	}{
 		{
 			name:         "user example 10@10 + 1@12",
@@ -114,12 +114,12 @@ func TestWeightedAverageUnitPriceMicro(t *testing.T) {
 
 func TestReverseAverageUnitPriceMicro(t *testing.T) {
 	tests := []struct {
-		name          string
-		curQty        int
-		curUnitMicro  int64
-		inQty         int
-		inTotalCents  int64
-		want          int64
+		name         string
+		curQty       int
+		curUnitMicro int64
+		inQty        int
+		inTotalCents int64
+		want         int64
 	}{
 		{
 			name:         "reverse user example with rounding drift",
@@ -134,7 +134,7 @@ func TestReverseAverageUnitPriceMicro(t *testing.T) {
 			curQty:       20,
 			curUnitMicro: 11000000, // 11元/件
 			inQty:        10,
-			inTotalCents: 12000, // 120元
+			inTotalCents: 12000,    // 120元
 			want:         10000000, // 10元/件
 		},
 		{

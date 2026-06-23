@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const defaultJWTExpireHours = 168
+const defaultDBPath = "./data/inventory.db"
 
 // Config 应用配置
 type Config struct {
 	Port           string
+	DBDriver       string
+	DBDSN          string
 	DBPath         string
 	ImageDir       string
 	LogLevel       string
@@ -36,7 +40,9 @@ func Load() *Config {
 
 	cfg := &Config{
 		Port:           getEnv("PORT", "8080"),
-		DBPath:         getEnv("DB_PATH", "./data/inventory.db"),
+		DBDriver:       normalizeDBDriver(getEnv("DB_DRIVER", "sqlite")),
+		DBDSN:          getEnv("DB_DSN", ""),
+		DBPath:         getEnv("DB_PATH", defaultDBPath),
 		LogLevel:       getEnv("LOG_LEVEL", "info"),
 		ImageDir:       getEnv("IMAGE_DIR", "./data/images"),
 		SSLCert:        getEnv("SSL_CERT", ""),
@@ -67,12 +73,45 @@ func (c *Config) IsHTTPS() bool {
 	return c.SSLCert != "" && c.SSLKey != ""
 }
 
+// DatabaseDisplay 返回可安全打印的数据库目标。
+func (c *Config) DatabaseDisplay() string {
+	if c.DBDriver == "sqlite" {
+		if strings.TrimSpace(c.DBDSN) != "" {
+			return c.DBDSN
+		}
+		return c.DBPath
+	}
+	return "external"
+}
+
 // Validate 校验配置合法性
 func (c *Config) Validate() error {
 	if c.IsAuthEnabled() && c.JWTSecret == "" {
 		return fmt.Errorf("启用鉴权时必须设置 JWT_SECRET 环境变量")
 	}
+	switch c.DBDriver {
+	case "sqlite":
+	case "mysql", "postgres":
+		if strings.TrimSpace(c.DBDSN) == "" {
+			return fmt.Errorf("使用 %s 数据库时必须设置 DB_DSN 环境变量", c.DBDriver)
+		}
+	default:
+		return fmt.Errorf("不支持的 DB_DRIVER: %s", c.DBDriver)
+	}
 	return nil
+}
+
+func normalizeDBDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "", "sqlite", "sqlite3":
+		return "sqlite"
+	case "mysql":
+		return "mysql"
+	case "postgres", "postgresql":
+		return "postgres"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
 }
 
 func getEnv(key, defaultValue string) string {
