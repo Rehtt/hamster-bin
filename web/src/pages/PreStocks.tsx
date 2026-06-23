@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Edit, Hash, Loader2, Plus, QrCode, Search, Trash2 } from 'lucide-react';
+import { CheckCircle2, Edit, Hash, Loader2, Minus, Plus, QrCode, Search, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Category, type ComponentOptions, type Pagination, type PreStock, type PreStockStatus, type Supplier } from '../types';
@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
+import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 import { calcUnitPriceMicro, formatCents, formatMicro, yuanToCents } from '../utils/price';
 import { copyToClipboard } from '../utils/clipboard';
 
@@ -78,6 +79,7 @@ export default function PreStocks() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PreStock | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [form, setForm] = useState<PreStockForm>(EMPTY_FORM);
   const [categoryInput, setCategoryInput] = useState('');
   const [supplierInput, setSupplierInput] = useState('');
@@ -446,6 +448,7 @@ export default function PreStocks() {
             <thead>
               <tr className="border-b">
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">编号</th>
+                <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">图片</th>
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">名称</th>
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">厂家型号</th>
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">分类</th>
@@ -459,12 +462,37 @@ export default function PreStocks() {
             </thead>
             <tbody>
               {loading && items.length === 0 ? (
-                <tr><td colSpan={10} className="p-4 text-center">加载中...</td></tr>
+                <tr><td colSpan={11} className="p-4 text-center">加载中...</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">暂无预入库记录</td></tr>
+                <tr><td colSpan={11} className="p-4 text-center text-muted-foreground">暂无预入库记录</td></tr>
               ) : items.map(item => (
                 <tr key={item.id} className="border-b transition-colors hover:bg-muted/50">
                   <td className="p-4 align-middle whitespace-nowrap">{renderNumber(item)}</td>
+                  <td className="p-4 align-middle">
+                    {item.image_url ? (
+                      <button
+                        type="button"
+                        className="w-10 h-10 rounded overflow-hidden bg-secondary/20 flex items-center justify-center hover:opacity-80 transition-opacity"
+                        onClick={() => setPreviewImage(item.image_url)}
+                        title="预览图片"
+                      >
+                        <img
+                          src={item.image_url}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          onError={e => {
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            target.parentElement!.innerText = '无图';
+                          }}
+                        />
+                      </button>
+                    ) : (
+                      <div className="w-10 h-10 rounded bg-secondary/20 flex items-center justify-center text-xs text-muted-foreground">
+                        无图
+                      </div>
+                    )}
+                  </td>
                   <td className="p-4 align-middle min-w-40">{item.name}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.model || '-'}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.category?.name || '-'}</td>
@@ -743,11 +771,34 @@ export default function PreStocks() {
             </div>
             <div className="space-y-2">
               <Label>预计数量</Label>
-              <Input
-                type="number"
-                min="0"
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: Math.max(0, prev.expected_quantity - 1) }))}
+                >
+                  <Minus className="h-4 w-4" />
+                </Button>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.expected_quantity}
+                  onChange={e => setForm({ ...form, expected_quantity: Number(e.target.value) })}
+                  className="text-center"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: prev.expected_quantity + 1 }))}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              <QuantityShortcuts
                 value={form.expected_quantity}
-                onChange={e => setForm({ ...form, expected_quantity: Number(e.target.value) })}
+                onSelect={quantity => setForm(prev => ({ ...prev, expected_quantity: quantity }))}
               />
             </div>
             <div className="space-y-2">
@@ -826,6 +877,23 @@ export default function PreStocks() {
         <Suspense fallback={<div className="p-4 text-center text-muted-foreground">加载扫码组件...</div>}>
           <QRScanner onScan={handleScan} onClose={() => setIsScannerOpen(false)} />
         </Suspense>
+      </Modal>
+
+      <Modal
+        isOpen={!!previewImage}
+        onClose={() => setPreviewImage(null)}
+        title="图片预览"
+        className="max-w-4xl"
+      >
+        <div className="flex justify-center items-center bg-black/5 rounded-md overflow-hidden min-h-[200px]">
+          {previewImage && (
+            <img
+              src={previewImage}
+              alt="Preview"
+              className="max-w-full max-h-[80vh] object-contain"
+            />
+          )}
+        </div>
       </Modal>
     </div>
   );

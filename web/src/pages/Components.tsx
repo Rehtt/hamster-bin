@@ -24,6 +24,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
+import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
@@ -1898,6 +1899,10 @@ export default function Components() {
                             <Plus className="h-4 w-4" />
                         </Button>
                     </div>
+                    <QuantityShortcuts
+                        value={formData.stock_quantity}
+                        onSelect={quantity => setFormData(prev => ({ ...prev, stock_quantity: quantity }))}
+                    />
                 </div>
                 {!editingComponent && (
                   <div className="space-y-2">
@@ -2117,6 +2122,10 @@ export default function Components() {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
+            <QuantityShortcuts
+              value={backfillForm.quantity}
+              onSelect={quantity => setBackfillForm(prev => ({ ...prev, quantity }))}
+            />
           </div>
           {backfillForm.quantity > 0 && backfillForm.totalPriceYuan && yuanToCents(backfillForm.totalPriceYuan) > 0 && (
             <p className="text-xs text-muted-foreground">
@@ -2178,6 +2187,10 @@ export default function Components() {
                         <Plus className="h-4 w-4" />
                     </Button>
                 </div>
+                <QuantityShortcuts
+                    value={stockForm.amount}
+                    onSelect={quantity => setStockForm(prev => ({ ...prev, amount: quantity }))}
+                />
             </div>
             {stockForm.type === 'in' && (
               <div className="space-y-2">
