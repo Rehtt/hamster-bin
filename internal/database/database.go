@@ -36,6 +36,8 @@ func Init(dbPath string) error {
 	DB.Exec("pragma synchronous = normal")
 	DB.Exec("pragma temp_store = memory")
 	DB.Exec("pragma auto_vacuum = INCREMENTAL")
+	DB.Exec("pragma wal_autocheckpoint = 1000")
+	DB.Exec("pragma wal_checkpoint(PASSIVE)")
 
 	// 自动迁移表结构
 	if err := autoMigrate(); err != nil {
