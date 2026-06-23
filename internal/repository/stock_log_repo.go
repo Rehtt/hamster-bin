@@ -33,11 +33,11 @@ func (r *StockLogRepository) GetByComponentID(componentID uint, limit int) ([]mo
 	var logs []models.StockLog
 	query := r.db.Where("component_id = ?", componentID).
 		Order("created_at DESC")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	
+
 	err := query.Find(&logs).Error
 	return logs, err
 }
@@ -48,7 +48,7 @@ func (r *StockLogRepository) GetAll(page, pageSize int) ([]models.StockLog, int6
 	var total int64
 
 	db := r.db.Model(&models.StockLog{}).Preload("Component")
-	
+
 	db.Count(&total)
 
 	if page > 0 && pageSize > 0 {
@@ -86,7 +86,7 @@ func (r *StockLogRepository) RevokeStockLog(id uint) (*models.StockLog, *models.
 			return ErrInsufficientStock
 		}
 
-		updates := map[string]interface{}{
+		updates := map[string]any{
 			"stock_quantity": gorm.Expr("stock_quantity + ?", reverseAmount),
 		}
 		if original.ChangeAmount > 0 && original.TotalPriceCents > 0 {

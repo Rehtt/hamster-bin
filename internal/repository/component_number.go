@@ -39,6 +39,15 @@ func (r *ComponentRepository) getMaxHBSequence(tx *gorm.DB) (int, error) {
 		return 0, err
 	}
 
+	var preStockNumbers []string
+	err = tx.Model(&models.PreStock{}).
+		Where("component_number LIKE ?", componentNumberPrefix+"%").
+		Pluck("component_number", &preStockNumbers).Error
+	if err != nil {
+		return 0, err
+	}
+	numbers = append(numbers, preStockNumbers...)
+
 	max := 0
 	for _, number := range numbers {
 		if !strings.HasPrefix(number, componentNumberPrefix) {
@@ -71,11 +80,35 @@ func (r *ComponentRepository) IsComponentNumberTaken(number string, excludeID ui
 	return count > 0, err
 }
 
+func isComponentNumberTakenInTx(tx *gorm.DB, number string, excludeComponentID uint, excludePreStockID uint) (bool, error) {
+	var componentCount int64
+	componentDB := tx.Model(&models.Component{}).Where("component_number = ?", number)
+	if excludeComponentID > 0 {
+		componentDB = componentDB.Where("id != ?", excludeComponentID)
+	}
+	if err := componentDB.Count(&componentCount).Error; err != nil {
+		return false, err
+	}
+	if componentCount > 0 {
+		return true, nil
+	}
+
+	var preStockCount int64
+	preStockDB := tx.Model(&models.PreStock{}).Where("component_number = ?", number)
+	if excludePreStockID > 0 {
+		preStockDB = preStockDB.Where("id != ?", excludePreStockID)
+	}
+	if err := preStockDB.Count(&preStockCount).Error; err != nil {
+		return false, err
+	}
+	return preStockCount > 0, nil
+}
+
 // AssignComponentNumberForCreate 创建前分配编号：留空则自动生成，手动填写则校验唯一性。
 func (r *ComponentRepository) AssignComponentNumberForCreate(component *models.Component) error {
 	component.ComponentNumber = NormalizeComponentNumber(component.ComponentNumber)
 	if component.ComponentNumber != nil {
-		taken, err := r.IsComponentNumberTaken(*component.ComponentNumber, 0)
+		taken, err := isComponentNumberTakenInTx(r.db, *component.ComponentNumber, 0, 0)
 		if err != nil {
 			return err
 		}
@@ -113,7 +146,7 @@ func (r *ComponentRepository) ValidateComponentNumberForUpdate(component *models
 		})
 	}
 
-	taken, err := r.IsComponentNumberTaken(*normalized, component.ID)
+	taken, err := isComponentNumberTakenInTx(r.db, *normalized, component.ID, 0)
 	if err != nil {
 		return err
 	}

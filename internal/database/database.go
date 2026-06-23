@@ -52,6 +52,7 @@ func autoMigrate() error {
 		&models.Category{},
 		&models.Supplier{},
 		&models.Component{},
+		&models.PreStock{},
 		&models.StockLog{},
 	)
 }

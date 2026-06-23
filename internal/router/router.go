@@ -34,6 +34,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config)
 	categoryHandler := handlers.NewCategoryHandler(db)
 	supplierHandler := handlers.NewSupplierHandler(db)
 	componentHandler := handlers.NewComponentHandler(db)
+	preStockHandler := handlers.NewPreStockHandler(db)
 	stockLogHandler := handlers.NewStockLogHandler(db)
 	statsHandler := handlers.NewStatsHandler(db)
 	parserHandler := handlers.NewParserHandler(parserManager)
@@ -96,6 +97,17 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config)
 				// 平台解析
 				components.POST("/parse", parserHandler.ParseComponent)
 				components.POST("/parse-qrcode", parserHandler.ParseQRCode)
+			}
+
+			// 预入库
+			preStocks := protected.Group("/pre-stocks")
+			{
+				preStocks.GET("", preStockHandler.GetAll)
+				preStocks.GET("/:id", preStockHandler.GetByID)
+				preStocks.POST("", preStockHandler.Create)
+				preStocks.PUT("/:id", preStockHandler.Update)
+				preStocks.DELETE("/:id", preStockHandler.Delete)
+				preStocks.POST("/:id/confirm", preStockHandler.Confirm)
 			}
 
 			// 库存记录

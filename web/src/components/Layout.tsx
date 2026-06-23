@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, FolderTree, History, Menu, X, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
+import { LayoutDashboard, Package, ClipboardList, FolderTree, History, Menu, X, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import { cn } from '../utils/cn';
 import { useAuth } from '../context/AuthContext';
 
@@ -9,6 +9,7 @@ const SIDEBAR_COLLAPSED_KEY = 'hamster-sidebar-collapsed';
 const navItems = [
   { name: '仪表盘', href: '/', icon: LayoutDashboard },
   { name: '元件管理', href: '/components', icon: Package },
+  { name: '预入库', href: '/pre-stocks', icon: ClipboardList },
   { name: '分类管理', href: '/categories', icon: FolderTree },
   { name: '库存记录', href: '/logs', icon: History },
 ];

@@ -44,6 +44,35 @@ export interface StockLog {
   component?: Component;
 }
 
+export type PreStockStatus = 'pending' | 'confirmed';
+
+export interface PreStock {
+  id: number;
+  category_id: number;
+  supplier_id?: number | null;
+  component_number?: string | null;
+  name: string;
+  model: string;
+  manufacturer: string;
+  value: string;
+  package: string;
+  supplier_part_number: string;
+  description: string;
+  expected_quantity: number;
+  total_price_cents?: number;
+  location: string;
+  datasheet_url: string;
+  image_url: string;
+  status: PreStockStatus;
+  component_id?: number | null;
+  confirmed_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  category?: Category;
+  supplier?: Supplier;
+  component?: Component;
+}
+
 export interface Pagination {
   page: number;
   page_size: number;

@@ -62,14 +62,14 @@ func IsValidComponentSortBy(sortBy string) bool {
 }
 
 func applyColumnLikeTokens(db *gorm.DB, column, raw string) *gorm.DB {
-	for _, token := range strings.Fields(raw) {
+	for token := range strings.FieldsSeq(raw) {
 		db = db.Where(column+" LIKE ?", "%"+token+"%")
 	}
 	return db
 }
 
 func applyKeywordTokens(db *gorm.DB, keyword string) *gorm.DB {
-	for _, token := range strings.Fields(keyword) {
+	for token := range strings.FieldsSeq(keyword) {
 		pattern := "%" + token + "%"
 		db = db.Where(
 			"components.name LIKE ? OR components.component_number LIKE ? OR components.model LIKE ? OR components.manufacturer LIKE ? OR components.value LIKE ? OR components.supplier_part_number LIKE ? OR components.description LIKE ? OR suppliers.name LIKE ?",
