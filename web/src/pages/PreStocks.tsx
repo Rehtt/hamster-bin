@@ -10,8 +10,10 @@ import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { CollapsibleFilterPanel } from '../components/ui/CollapsibleFilterPanel';
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
+import { RowActionsMenu } from '../components/ui/RowActionsMenu';
 import { calcUnitPriceMicro, formatCents, formatMicro, yuanToCents } from '../utils/price';
 import { copyToClipboard } from '../utils/clipboard';
+import { cn } from '../utils/cn';
 
 const QRScanner = lazy(() => import('../components/QRScanner'));
 
@@ -105,6 +107,7 @@ export default function PreStocks() {
   const [saving, setSaving] = useState(false);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [activeRowId, setActiveRowId] = useState<number | null>(null);
 
   const totalPage = pagination.total_page || Math.ceil(pagination.total / pagination.page_size);
   const filteredCategories = useMemo(
@@ -472,7 +475,7 @@ export default function PreStocks() {
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">预计数量</th>
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">采购总价</th>
                 <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">状态</th>
-                <th className="h-12 px-4 font-medium text-muted-foreground whitespace-nowrap">操作</th>
+                <th className="sticky right-0 z-[6] h-12 bg-background px-4 font-medium text-muted-foreground whitespace-nowrap">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -481,7 +484,14 @@ export default function PreStocks() {
               ) : items.length === 0 ? (
                 <tr><td colSpan={11} className="p-4 text-center text-muted-foreground">暂无预入库记录</td></tr>
               ) : items.map(item => (
-                <tr key={item.id} className="border-b transition-colors hover:bg-muted/50">
+                <tr
+                  key={item.id}
+                  className={cn(
+                    'group border-b transition-colors hover:bg-muted/50',
+                    activeRowId === item.id &&
+                      'relative z-10 [&>td:not(:last-child)]:blur-sm [&>td:not(:last-child)]:opacity-60 [&>td:not(:last-child)]:pointer-events-none [&>td:not(:last-child)]:transition-all [&>td:last-child]:z-20',
+                  )}
+                >
                   <td className="p-4 align-middle whitespace-nowrap">{renderNumber(item)}</td>
                   <td className="p-4 align-middle">
                     {item.image_url ? (
@@ -520,25 +530,35 @@ export default function PreStocks() {
                       {statusLabel(item.status)}
                     </span>
                   </td>
-                  <td className="p-4 align-middle">
-                    <div className="flex gap-2">
-                      {item.status === 'pending' && (
-                        <>
-                          <Button variant="ghost" size="icon" onClick={() => openForm(item)} title="编辑">
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleConfirm(item)} title="确认入库" disabled={confirmingId === item.id}>
-                            {confirmingId === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4 text-green-600" />}
-                          </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(item)} title="删除" className="text-destructive" disabled={deletingId === item.id}>
-                            {deletingId === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                          </Button>
-                        </>
-                      )}
-                      {item.status === 'confirmed' && item.component_id && (
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">元件 #{item.component_id}</span>
-                      )}
-                    </div>
+                  <td className="sticky right-0 z-[5] bg-background/95 p-2 align-middle shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)] backdrop-blur-sm">
+                    {item.status === 'pending' ? (
+                      <RowActionsMenu
+                        rowId={item.id}
+                        activeRowId={activeRowId}
+                        onActiveRowChange={setActiveRowId}
+                        actions={[
+                          { key: 'edit', icon: Edit, label: '编辑', onClick: () => openForm(item) },
+                          {
+                            key: 'confirm',
+                            icon: CheckCircle2,
+                            label: '确认入库',
+                            onClick: () => handleConfirm(item),
+                            disabled: confirmingId === item.id,
+                            iconClassName: 'text-green-600',
+                          },
+                          {
+                            key: 'delete',
+                            icon: Trash2,
+                            label: '删除',
+                            onClick: () => handleDelete(item),
+                            disabled: deletingId === item.id,
+                            destructive: true,
+                          },
+                        ]}
+                      />
+                    ) : item.component_id ? (
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">元件 #{item.component_id}</span>
+                    ) : null}
                   </td>
                 </tr>
               ))}

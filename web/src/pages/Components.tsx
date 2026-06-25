@@ -27,6 +27,7 @@ import { Label } from '../components/ui/Label';
 import { PageHeader } from '../components/ui/PageHeader';
 import { CollapsibleFilterPanel, type CollapsibleFilterPanelHandle } from '../components/ui/CollapsibleFilterPanel';
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
+import { RowActionsMenu } from '../components/ui/RowActionsMenu';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
@@ -478,6 +479,7 @@ export default function Components() {
   const [showSearchSupplierDropdown, setShowSearchSupplierDropdown] = useState(false);
   const [showSearchCategoryDropdown, setShowSearchCategoryDropdown] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [activeRowId, setActiveRowId] = useState<number | null>(null);
   const [isBatchLocationOpen, setIsBatchLocationOpen] = useState(false);
   const [batchLocation, setBatchLocation] = useState('');
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
@@ -1578,14 +1580,21 @@ export default function Components() {
                     {getColumnHeader(column)}
                   </th>
                 ))}
-                <th className="h-12 px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">操作</th>
+                <th className="sticky right-0 z-[6] h-12 bg-background px-4 align-middle font-medium text-muted-foreground whitespace-nowrap">操作</th>
               </tr>
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {loading && components.length === 0 ? (
                 <tr><td colSpan={2 + visibleTableColumns.length + 1} className="p-4 text-center">加载中...</td></tr>
               ) : components.map(component => (
-                <tr key={component.id} className="border-b transition-colors hover:bg-muted/50">
+                <tr
+                  key={component.id}
+                  className={cn(
+                    'group border-b transition-colors hover:bg-muted/50',
+                    activeRowId === component.id &&
+                      'relative z-10 [&>td:not(:last-child)]:blur-sm [&>td:not(:last-child)]:opacity-60 [&>td:not(:last-child)]:pointer-events-none [&>td:not(:last-child)]:transition-all [&>td:last-child]:z-20',
+                  )}
+                >
                   <td className="p-4 align-middle">
                     <input
                       type="checkbox"
@@ -1612,15 +1621,20 @@ export default function Components() {
                     </div>
                   </td>
                   {visibleTableColumns.map(column => renderTableCell(column.key, component))}
-                  <td className="p-4 align-middle">
-                    <div className="flex gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => openForm(component)} title="编辑"><Edit className="h-4 w-4" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => openStock(component)} title="库存"><Database className="h-4 w-4 text-blue-500" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => openBackfill(component)} title="补录价格"><Coins className="h-4 w-4 text-amber-600" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => openLogs(component)} title="记录"><History className="h-4 w-4 text-gray-500" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => openCopyForm(component)} title="复制"><Copy className="h-4 w-4 text-emerald-600" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(component.id)} title="删除" className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
-                    </div>
+                  <td className="sticky right-0 z-[5] bg-background/95 p-2 align-middle shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)] backdrop-blur-sm">
+                    <RowActionsMenu
+                      rowId={component.id}
+                      activeRowId={activeRowId}
+                      onActiveRowChange={setActiveRowId}
+                      actions={[
+                        { key: 'edit', icon: Edit, label: '编辑', onClick: () => openForm(component) },
+                        { key: 'stock', icon: Database, label: '库存', onClick: () => openStock(component), iconClassName: 'text-blue-500' },
+                        { key: 'backfill', icon: Coins, label: '补录价格', onClick: () => openBackfill(component), iconClassName: 'text-amber-600' },
+                        { key: 'logs', icon: History, label: '记录', onClick: () => openLogs(component), iconClassName: 'text-gray-500' },
+                        { key: 'copy', icon: Copy, label: '复制', onClick: () => openCopyForm(component), iconClassName: 'text-emerald-600' },
+                        { key: 'delete', icon: Trash2, label: '删除', onClick: () => handleDelete(component.id), destructive: true },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))}
