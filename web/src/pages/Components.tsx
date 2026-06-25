@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Minus, Search, Edit, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download, Coins, Columns3, GripVertical } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download, Coins, Columns3, GripVertical } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
@@ -501,6 +501,7 @@ export default function Components() {
 
   // Form State
   const [editingComponent, setEditingComponent] = useState<Component | null>(null);
+  const [isCopyingComponent, setIsCopyingComponent] = useState(false);
   const [formData, setFormData] = useState<Partial<Component>>({
     name: '', category_id: undefined, stock_quantity: 0
   });
@@ -1020,6 +1021,8 @@ export default function Components() {
     setSelectedFile(null);
     setShowImageMenu(false);
     setShowUrlInput(false);
+    setIsCopyingComponent(false);
+    setPlatformCode('');
     if (component) {
       if (component.id) {
           setEditingComponent(component);
@@ -1041,6 +1044,38 @@ export default function Components() {
       setSupplierInput('');
       setPreviewUrl('');
     }
+    setIsFormOpen(true);
+  };
+
+  const openCopyForm = (component: Component) => {
+    setSelectedFile(null);
+    setShowImageMenu(false);
+    setShowUrlInput(false);
+    setEditingComponent(null);
+    setIsCopyingComponent(true);
+    setPlatformCode('');
+    setFormData({
+      category_id: component.category_id,
+      supplier_id: component.supplier_id,
+      component_number: '',
+      name: component.name,
+      model: component.model,
+      manufacturer: component.manufacturer,
+      value: component.value,
+      package: component.package,
+      supplier_part_number: component.supplier_part_number,
+      description: component.description,
+      stock_quantity: 0,
+      location: component.location,
+      datasheet_url: component.datasheet_url,
+      image_url: component.image_url,
+      category: component.category,
+      supplier: component.supplier,
+    });
+    setCategoryInput(component.category?.name || '');
+    setSupplierInput(component.supplier?.name || '');
+    setFormTotalPriceYuan('');
+    setPreviewUrl(component.image_url || '');
     setIsFormOpen(true);
   };
 
@@ -1560,6 +1595,7 @@ export default function Components() {
                   <td className="p-4 align-middle">
                     <div className="flex gap-2">
                         <Button variant="ghost" size="icon" onClick={() => openForm(component)} title="编辑"><Edit className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openCopyForm(component)} title="复制"><Copy className="h-4 w-4 text-emerald-600" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openStock(component)} title="库存"><Database className="h-4 w-4 text-blue-500" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openBackfill(component)} title="补录价格"><Coins className="h-4 w-4 text-amber-600" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openLogs(component)} title="记录"><History className="h-4 w-4 text-gray-500" /></Button>
@@ -1673,7 +1709,7 @@ export default function Components() {
       <Modal 
         isOpen={isFormOpen} 
         onClose={() => setIsFormOpen(false)} 
-        title={editingComponent ? '编辑元件' : '添加元件'}
+        title={editingComponent ? '编辑元件' : isCopyingComponent ? '复制元件' : '添加元件'}
         footer={
           <>
             <Button variant="outline" onClick={() => setIsFormOpen(false)} disabled={isImportParsing && !editingComponent}>取消</Button>
