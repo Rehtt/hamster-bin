@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Link, X, Loader2, Hash, Download, Coins, Columns3, GripVertical } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Loader2, Hash, Download, Coins, Columns3, GripVertical } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
@@ -520,7 +520,6 @@ export default function Components() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [showImageMenu, setShowImageMenu] = useState(false);
-  const [showUrlInput, setShowUrlInput] = useState(false);
   const [formTotalPriceYuan, setFormTotalPriceYuan] = useState('');
 
 
@@ -1020,7 +1019,6 @@ export default function Components() {
   const openForm = (component?: Component) => {
     setSelectedFile(null);
     setShowImageMenu(false);
-    setShowUrlInput(false);
     setIsCopyingComponent(false);
     setPlatformCode('');
     if (component) {
@@ -1050,7 +1048,6 @@ export default function Components() {
   const openCopyForm = (component: Component) => {
     setSelectedFile(null);
     setShowImageMenu(false);
-    setShowUrlInput(false);
     setEditingComponent(null);
     setIsCopyingComponent(true);
     setPlatformCode('');
@@ -2069,9 +2066,6 @@ export default function Components() {
                                     <Button onClick={() => setIsCameraOpen(true)} className="w-full">
                                         <Camera className="mr-2 h-4 w-4" /> 拍摄图片
                                     </Button>
-                                    <Button variant="outline" onClick={() => { setShowUrlInput(true); setShowImageMenu(false); }} className="w-full">
-                                        <Link className="mr-2 h-4 w-4" /> 输入 URL
-                                    </Button>
                                     <Button variant="ghost" onClick={() => setShowImageMenu(false)} className="w-full text-destructive">
                                         取消
                                     </Button>
@@ -2079,24 +2073,18 @@ export default function Components() {
                             )}
                         </div>
                         
-                        {/* URL 输入框 */}
-                        {showUrlInput && (
-                            <div className="mt-2 flex gap-2 animate-in slide-in-from-top-2">
-                                <Input 
-                                    value={formData.image_url || ''} 
-                                    onChange={e => {
-                                        setFormData({...formData, image_url: e.target.value});
-                                        if (e.target.value) {
-                                            setPreviewUrl(''); // 如果输入 URL，清除本地预览
-                                            setSelectedFile(null);
-                                        }
-                                    }} 
-                                    placeholder="输入图片 URL" 
-                                    autoFocus
-                                />
-                                <Button variant="ghost" size="icon" onClick={() => setShowUrlInput(false)}><X className="h-4 w-4" /></Button>
-                            </div>
-                        )}
+                        <div className="mt-2 space-y-2">
+                            <Label>图片 URL</Label>
+                            <Input 
+                                value={formData.image_url || ''} 
+                                onChange={e => {
+                                    setFormData({...formData, image_url: e.target.value});
+                                    setPreviewUrl('');
+                                    setSelectedFile(null);
+                                }} 
+                                placeholder="输入图片 URL" 
+                            />
+                        </div>
                     </div>
                 </div>
                 <div className="space-y-2">
