@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Card, CardContent } from '../components/ui/Card';
 
 export default function Categories() {
@@ -79,12 +80,14 @@ export default function Categories() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold tracking-tight">分类管理</h2>
-        <Button onClick={() => openModal()}>
-          <Plus className="mr-2 h-4 w-4" /> 添加分类
-        </Button>
-      </div>
+      <PageHeader
+        title="分类管理"
+        actions={
+          <Button onClick={() => openModal()}>
+            <Plus className="mr-2 h-4 w-4" /> 添加分类
+          </Button>
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {categories.map((category) => (

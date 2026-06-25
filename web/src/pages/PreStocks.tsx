@@ -7,11 +7,19 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
+import { PageHeader } from '../components/ui/PageHeader';
+import { CollapsibleFilterPanel } from '../components/ui/CollapsibleFilterPanel';
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 import { calcUnitPriceMicro, formatCents, formatMicro, yuanToCents } from '../utils/price';
 import { copyToClipboard } from '../utils/clipboard';
 
 const QRScanner = lazy(() => import('../components/QRScanner'));
+
+const STATUS_FILTER_LABELS: Record<PreStockStatus | 'all', string> = {
+  pending: '待入库',
+  confirmed: '已入库',
+  all: '全部',
+};
 
 type PreStockForm = {
   component_number: string;
@@ -413,34 +421,41 @@ export default function PreStocks() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h2 className="text-3xl font-bold tracking-tight">预入库</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => fetchItems(1, pagination.page_size)} disabled={loading}>
-            <Search className="mr-2 h-4 w-4" /> 刷新
-          </Button>
-          <Button onClick={() => openForm()}>
-            <Plus className="mr-2 h-4 w-4" /> 新建预入库
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="预入库"
+        actions={
+          <>
+            <Button variant="outline" onClick={() => fetchItems(1, pagination.page_size)} disabled={loading}>
+              <Search className="mr-2 h-4 w-4" /> 刷新
+            </Button>
+            <Button onClick={() => openForm()}>
+              <Plus className="mr-2 h-4 w-4" /> 新建预入库
+            </Button>
+          </>
+        }
+      />
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-end rounded-md border p-4">
-        <div className="space-y-1">
-          <Label htmlFor="status-filter" className="text-xs text-muted-foreground">状态</Label>
-          <select
-            id="status-filter"
-            value={statusFilter}
-            onChange={e => handleStatusChange(e.target.value as PreStockStatus | 'all')}
-            className="h-9 w-full sm:w-36 rounded-md border border-input bg-background px-2 text-sm"
-          >
-            <option value="pending">待入库</option>
-            <option value="confirmed">已入库</option>
-            <option value="all">全部</option>
-          </select>
+      <CollapsibleFilterPanel
+        summary={STATUS_FILTER_LABELS[statusFilter]}
+        activeCount={statusFilter !== 'pending' ? 1 : 0}
+      >
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+          <div className="space-y-1">
+            <Label htmlFor="status-filter" className="text-xs text-muted-foreground">状态</Label>
+            <select
+              id="status-filter"
+              value={statusFilter}
+              onChange={e => handleStatusChange(e.target.value as PreStockStatus | 'all')}
+              className="h-9 w-full sm:w-36 rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="pending">待入库</option>
+              <option value="confirmed">已入库</option>
+              <option value="all">全部</option>
+            </select>
+          </div>
+          <div className="text-sm text-muted-foreground sm:ml-auto">共 {pagination.total} 条</div>
         </div>
-        <div className="text-sm text-muted-foreground sm:ml-auto">共 {pagination.total} 条</div>
-      </div>
+      </CollapsibleFilterPanel>
 
       <div className="rounded-md border">
         <div className="w-full overflow-auto">

@@ -24,6 +24,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
+import { PageHeader } from '../components/ui/PageHeader';
+import { CollapsibleFilterPanel, type CollapsibleFilterPanelHandle } from '../components/ui/CollapsibleFilterPanel';
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
@@ -517,6 +519,7 @@ export default function Components() {
   
   // Image Upload State
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const filterPanelRef = useRef<CollapsibleFilterPanelHandle>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [showImageMenu, setShowImageMenu] = useState(false);
@@ -669,6 +672,9 @@ export default function Components() {
   const handleSearch = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
     fetchComponents(1, pagination.page_size);
+    if (isMobile) {
+      filterPanelRef.current?.collapse();
+    }
   };
 
   const handleClearFilters = () => {
@@ -700,6 +706,10 @@ export default function Components() {
     selectedCategory !== '' ||
     categorySearchInput.trim() !== '' ||
     SEARCH_PARAM_KEYS.some(key => searchFilters[key].trim() !== '');
+
+  const activeFilterCount =
+    SEARCH_PARAM_KEYS.filter(key => searchFilters[key].trim() !== '').length +
+    (selectedCategory !== '' || categorySearchInput.trim() !== '' ? 1 : 0);
 
   const handleSearchFilterChange = (key: keyof ComponentSearchFilters, value: string) => {
     setSearchFilters(prev => ({ ...prev, [key]: value }));
@@ -1337,13 +1347,14 @@ export default function Components() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h2 className="text-3xl font-bold tracking-tight">元件管理</h2>
-        <div className="flex gap-2">
+      <PageHeader
+        title="元件管理"
+        actions={
+          <>
             {isMobile && (
-                <Button onClick={() => setIsScannerOpen(true)} variant="outline" disabled={isImportParsing}>
-                    <QrCode className="mr-2 h-4 w-4" /> 扫码录入
-                </Button>
+              <Button onClick={() => setIsScannerOpen(true)} variant="outline" disabled={isImportParsing}>
+                <QrCode className="mr-2 h-4 w-4" /> 扫码录入
+              </Button>
             )}
             <Button variant="outline" onClick={openColumnSettings}>
               <Columns3 className="mr-2 h-4 w-4" /> 列设置
@@ -1364,12 +1375,24 @@ export default function Components() {
               )}
             </Button>
             <Button onClick={() => openForm()}>
-                <Plus className="mr-2 h-4 w-4" /> 添加元件
+              <Plus className="mr-2 h-4 w-4" /> 添加元件
             </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      <div className="rounded-md border p-4 space-y-4">
+      <CollapsibleFilterPanel
+        ref={filterPanelRef}
+        activeCount={activeFilterCount}
+        showClear={hasActiveFilters}
+        onClear={handleClearFilters}
+        headerActions={
+          <Button size="sm" variant="secondary" onClick={handleSearch}>
+            <Search className="h-4 w-4 mr-1" />
+            搜索
+          </Button>
+        }
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           {renderSearchField('component_number')}
           {renderSearchField('name')}
@@ -1523,7 +1546,7 @@ export default function Components() {
             )}
           </div>
         </div>
-      </div>
+      </CollapsibleFilterPanel>
 
       {selectedIds.length > 0 && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-md border bg-muted/30 px-4 py-3">

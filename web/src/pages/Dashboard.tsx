@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 import client from '../api/client';
 import { type DashboardStats, type StatsRange } from '../types';
 import { formatCents } from '../utils/price';
@@ -64,21 +65,23 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-3xl font-bold tracking-tight">仪表盘</h2>
-        <div className="flex gap-2">
-          {rangeOptions.map((option) => (
-            <Button
-              key={option.value}
-              size="sm"
-              variant={range === option.value ? 'default' : 'outline'}
-              onClick={() => setRange(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="仪表盘"
+        actions={
+          <>
+            {rangeOptions.map((option) => (
+              <Button
+                key={option.value}
+                size="sm"
+                variant={range === option.value ? 'default' : 'outline'}
+                onClick={() => setRange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </>
+        }
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
