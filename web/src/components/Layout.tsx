@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Package, ClipboardList, FolderTree, History, Menu, X, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import { cn } from '../utils/cn';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/useAuth';
 
 const SIDEBAR_COLLAPSED_KEY = 'hamster-sidebar-collapsed';
 

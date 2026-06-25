@@ -1595,10 +1595,10 @@ export default function Components() {
                   <td className="p-4 align-middle">
                     <div className="flex gap-2">
                         <Button variant="ghost" size="icon" onClick={() => openForm(component)} title="编辑"><Edit className="h-4 w-4" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => openCopyForm(component)} title="复制"><Copy className="h-4 w-4 text-emerald-600" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openStock(component)} title="库存"><Database className="h-4 w-4 text-blue-500" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openBackfill(component)} title="补录价格"><Coins className="h-4 w-4 text-amber-600" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openLogs(component)} title="记录"><History className="h-4 w-4 text-gray-500" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openCopyForm(component)} title="复制"><Copy className="h-4 w-4 text-emerald-600" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => handleDelete(component.id)} title="删除" className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   </td>
