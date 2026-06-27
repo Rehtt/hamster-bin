@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     ports:
-      - "${PORT:-8080}:8080"
+      - "${PORT:-8080}:${PORT:-8080}"
     volumes:
       - ./data:/app/data
       # 启用 HTTPS 时取消注释，并将 SSL_CERT/SSL_KEY 设为容器内路径（如 /app/certs/cert.pem）
