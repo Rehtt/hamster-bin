@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
@@ -235,5 +236,139 @@ func TestComponentRepositoryGetDistinctManufacturers(t *testing.T) {
 	}
 	if manufacturers[0] != "Espressif" || manufacturers[1] != "YAGEO" {
 		t.Fatalf("got manufacturers %v, want [Espressif YAGEO]", manufacturers)
+	}
+}
+
+func setupComponentStockTestDB(t *testing.T) (*gorm.DB, []models.Component) {
+	t.Helper()
+	db := setupComponentTestDB(t)
+	if err := db.AutoMigrate(&models.StockLog{}); err != nil {
+		t.Fatalf("migrate stock log: %v", err)
+	}
+	seedComponentFixtures(t, db)
+
+	var components []models.Component
+	if err := db.Find(&components).Error; err != nil {
+		t.Fatalf("load components: %v", err)
+	}
+	for i := range components {
+		stock := 10
+		unitPrice := int64(0)
+		switch components[i].Name {
+		case "贴片电阻":
+			stock = 100
+			unitPrice = 10000 // 0.01 元
+		case "贴片电容":
+			stock = 50
+			unitPrice = 20000
+		case "ESP32 模块":
+			stock = 5
+			unitPrice = 150000000 // 150 元
+		}
+		if err := db.Model(&components[i]).Updates(map[string]any{
+			"stock_quantity":   stock,
+			"unit_price_micro": unitPrice,
+		}).Error; err != nil {
+			t.Fatalf("update component stock: %v", err)
+		}
+		components[i].StockQuantity = stock
+		components[i].UnitPriceMicro = unitPrice
+	}
+	return db, components
+}
+
+func componentByName(components []models.Component, name string) models.Component {
+	for _, c := range components {
+		if c.Name == name {
+			return c
+		}
+	}
+	return models.Component{}
+}
+
+func TestComponentRepositoryBatchApplyStockOutSuccess(t *testing.T) {
+	db, fixtures := setupComponentStockTestDB(t)
+	repo := NewComponentRepository(db)
+
+	resistor := componentByName(fixtures, "贴片电阻")
+	capacitor := componentByName(fixtures, "贴片电容")
+
+	updated, failures, err := repo.BatchApplyStockOut([]BatchStockOutItem{
+		{ComponentID: resistor.ID, Quantity: 10},
+		{ComponentID: capacitor.ID, Quantity: 5},
+	}, "项目装配")
+	if err != nil {
+		t.Fatalf("BatchApplyStockOut: %v", err)
+	}
+	if len(failures) != 0 {
+		t.Fatalf("failures = %#v, want none", failures)
+	}
+	if len(updated) != 2 {
+		t.Fatalf("len(updated) = %d, want 2", len(updated))
+	}
+
+	var reloadedResistor models.Component
+	if err := db.First(&reloadedResistor, resistor.ID).Error; err != nil {
+		t.Fatalf("reload resistor: %v", err)
+	}
+	if reloadedResistor.StockQuantity != 90 {
+		t.Fatalf("resistor stock = %d, want 90", reloadedResistor.StockQuantity)
+	}
+
+	var reloadedCapacitor models.Component
+	if err := db.First(&reloadedCapacitor, capacitor.ID).Error; err != nil {
+		t.Fatalf("reload capacitor: %v", err)
+	}
+	if reloadedCapacitor.StockQuantity != 45 {
+		t.Fatalf("capacitor stock = %d, want 45", reloadedCapacitor.StockQuantity)
+	}
+
+	var logCount int64
+	if err := db.Model(&models.StockLog{}).Count(&logCount).Error; err != nil {
+		t.Fatalf("count logs: %v", err)
+	}
+	if logCount != 2 {
+		t.Fatalf("logCount = %d, want 2", logCount)
+	}
+}
+
+func TestComponentRepositoryBatchApplyStockOutRollback(t *testing.T) {
+	db, fixtures := setupComponentStockTestDB(t)
+	repo := NewComponentRepository(db)
+
+	resistor := componentByName(fixtures, "贴片电阻")
+	esp32 := componentByName(fixtures, "ESP32 模块")
+
+	_, failures, err := repo.BatchApplyStockOut([]BatchStockOutItem{
+		{ComponentID: resistor.ID, Quantity: 10},
+		{ComponentID: esp32.ID, Quantity: 10},
+	}, "项目装配")
+	if !errors.Is(err, ErrBatchStockOutFailed) {
+		t.Fatalf("err = %v, want ErrBatchStockOutFailed", err)
+	}
+	if len(failures) != 1 {
+		t.Fatalf("len(failures) = %d, want 1", len(failures))
+	}
+	if failures[0].ComponentID != esp32.ID {
+		t.Fatalf("failure component_id = %d, want %d", failures[0].ComponentID, esp32.ID)
+	}
+	if failures[0].StockQuantity != 5 || failures[0].Requested != 10 {
+		t.Fatalf("failure = %#v, want stock=5 requested=10", failures[0])
+	}
+
+	var reloadedResistor models.Component
+	if err := db.First(&reloadedResistor, resistor.ID).Error; err != nil {
+		t.Fatalf("reload resistor: %v", err)
+	}
+	if reloadedResistor.StockQuantity != 100 {
+		t.Fatalf("resistor stock = %d, want 100 (rollback)", reloadedResistor.StockQuantity)
+	}
+
+	var logCount int64
+	if err := db.Model(&models.StockLog{}).Count(&logCount).Error; err != nil {
+		t.Fatalf("count logs: %v", err)
+	}
+	if logCount != 0 {
+		t.Fatalf("logCount = %d, want 0 (rollback)", logCount)
 	}
 }

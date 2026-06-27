@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Loader2, Hash, Download, Coins, Columns3, GripVertical } from 'lucide-react';
+import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Loader2, Hash, Download, Coins, Columns3, GripVertical, PackageMinus } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
@@ -28,6 +28,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { CollapsibleFilterPanel, type CollapsibleFilterPanelHandle } from '../components/ui/CollapsibleFilterPanel';
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 import { RowActionsMenu } from '../components/ui/RowActionsMenu';
+import { BatchStockOutModal } from '../components/BatchStockOutModal';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
@@ -483,6 +484,8 @@ export default function Components() {
   const [isBatchLocationOpen, setIsBatchLocationOpen] = useState(false);
   const [batchLocation, setBatchLocation] = useState('');
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
+  const [isBatchStockOutOpen, setIsBatchStockOutOpen] = useState(false);
+  const [batchStockOutSeed, setBatchStockOutSeed] = useState<Component[]>([]);
   const [isGeneratingNumbers, setIsGeneratingNumbers] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [exportColumns, setExportColumns] = useState<ColumnState[]>(() => readStoredExportColumns());
@@ -794,6 +797,16 @@ export default function Components() {
     } finally {
       setIsBatchUpdating(false);
     }
+  };
+
+  const openBatchStockOut = (seed: Component[] = []) => {
+    setBatchStockOutSeed(seed);
+    setIsBatchStockOutOpen(true);
+  };
+
+  const handleBatchStockOutSuccess = () => {
+    setSelectedIds([]);
+    fetchComponents(pagination.page, pagination.page_size);
   };
 
   const handleGenerateNumbers = async () => {
@@ -1376,6 +1389,9 @@ export default function Components() {
                 </>
               )}
             </Button>
+            <Button variant="outline" onClick={() => openBatchStockOut()}>
+              <PackageMinus className="mr-2 h-4 w-4" /> 批量出库
+            </Button>
             <Button onClick={() => openForm()}>
               <Plus className="mr-2 h-4 w-4" /> 添加元件
             </Button>
@@ -1555,6 +1571,9 @@ export default function Components() {
           <span className="text-sm text-muted-foreground">已选择 {selectedIds.length} 项</span>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setSelectedIds([])}>取消选择</Button>
+            <Button variant="outline" onClick={() => openBatchStockOut(components.filter(c => selectedIds.includes(c.id)))}>
+              批量出库
+            </Button>
             <Button onClick={() => setIsBatchLocationOpen(true)}>批量修改位置</Button>
           </div>
         </div>
@@ -1738,6 +1757,13 @@ export default function Components() {
           </div>
         </div>
       </Modal>
+
+      <BatchStockOutModal
+        isOpen={isBatchStockOutOpen}
+        onClose={() => setIsBatchStockOutOpen(false)}
+        initialComponents={batchStockOutSeed}
+        onSuccess={handleBatchStockOutSuccess}
+      />
 
       {/* Edit/Add Modal */}
       <Modal 

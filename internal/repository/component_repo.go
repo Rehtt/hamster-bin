@@ -9,7 +9,10 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrInsufficientStock = errors.New("库存不足")
+var (
+	ErrInsufficientStock   = errors.New("库存不足")
+	ErrBatchStockOutFailed = errors.New("批量出库失败")
+)
 
 type ComponentRepository struct {
 	db *gorm.DB
@@ -187,64 +190,155 @@ type StockChangeParams struct {
 	TotalPriceCents int64
 }
 
-// ApplyStockChange 在事务中更新库存并写入流水，可选更新参考单价
-func (r *ComponentRepository) ApplyStockChange(params StockChangeParams) (*models.Component, error) {
+func applyStockChangeTx(tx *gorm.DB, params StockChangeParams) (*models.Component, error) {
 	var updated models.Component
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		var component models.Component
-		if err := tx.First(&component, params.ComponentID).Error; err != nil {
-			return err
-		}
+	var component models.Component
+	if err := tx.First(&component, params.ComponentID).Error; err != nil {
+		return nil, err
+	}
 
-		if component.StockQuantity+params.Amount < 0 {
-			return ErrInsufficientStock
-		}
+	if component.StockQuantity+params.Amount < 0 {
+		return nil, ErrInsufficientStock
+	}
 
-		if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
-			UpdateColumn("stock_quantity", gorm.Expr("stock_quantity + ?", params.Amount)).Error; err != nil {
-			return err
-		}
+	if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
+		UpdateColumn("stock_quantity", gorm.Expr("stock_quantity + ?", params.Amount)).Error; err != nil {
+		return nil, err
+	}
 
-		if params.Amount > 0 && params.TotalPriceCents > 0 {
-			newUnitPrice := price.WeightedAverageUnitPriceMicro(
-				component.StockQuantity,
-				component.UnitPriceMicro,
-				params.Amount,
-				params.TotalPriceCents,
-			)
-			if newUnitPrice > 0 {
-				if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
-					Update("unit_price_micro", newUnitPrice).Error; err != nil {
-					return err
-				}
+	if params.Amount > 0 && params.TotalPriceCents > 0 {
+		newUnitPrice := price.WeightedAverageUnitPriceMicro(
+			component.StockQuantity,
+			component.UnitPriceMicro,
+			params.Amount,
+			params.TotalPriceCents,
+		)
+		if newUnitPrice > 0 {
+			if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).
+				Update("unit_price_micro", newUnitPrice).Error; err != nil {
+				return nil, err
 			}
 		}
+	}
 
-		logUnitPrice := params.UnitPriceMicro
-		logTotalPrice := params.TotalPriceCents
-		if params.Amount < 0 && logUnitPrice == 0 && component.UnitPriceMicro > 0 {
-			qty := -params.Amount
-			logUnitPrice = component.UnitPriceMicro
-			logTotalPrice = price.OutboundTotalCents(component.UnitPriceMicro, qty)
-		}
+	logUnitPrice := params.UnitPriceMicro
+	logTotalPrice := params.TotalPriceCents
+	if params.Amount < 0 && logUnitPrice == 0 && component.UnitPriceMicro > 0 {
+		qty := -params.Amount
+		logUnitPrice = component.UnitPriceMicro
+		logTotalPrice = price.OutboundTotalCents(component.UnitPriceMicro, qty)
+	}
 
-		log := models.StockLog{
-			ComponentID:     params.ComponentID,
-			ChangeAmount:    params.Amount,
-			UnitPriceMicro:  logUnitPrice,
-			TotalPriceCents: logTotalPrice,
-			Reason:          params.Reason,
-		}
-		if err := tx.Create(&log).Error; err != nil {
-			return err
-		}
+	log := models.StockLog{
+		ComponentID:     params.ComponentID,
+		ChangeAmount:    params.Amount,
+		UnitPriceMicro:  logUnitPrice,
+		TotalPriceCents: logTotalPrice,
+		Reason:          params.Reason,
+	}
+	if err := tx.Create(&log).Error; err != nil {
+		return nil, err
+	}
 
-		return tx.Preload("Category").Preload("Supplier").First(&updated, params.ComponentID).Error
+	if err := tx.Preload("Category").Preload("Supplier").First(&updated, params.ComponentID).Error; err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+// ApplyStockChange 在事务中更新库存并写入流水，可选更新参考单价
+func (r *ComponentRepository) ApplyStockChange(params StockChangeParams) (*models.Component, error) {
+	var updated *models.Component
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		updated, err = applyStockChangeTx(tx, params)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &updated, nil
+	return updated, nil
+}
+
+// BatchStockOutItem 批量出库单项
+type BatchStockOutItem struct {
+	ComponentID uint
+	Quantity    int
+}
+
+// BatchStockOutFailure 批量出库失败项
+type BatchStockOutFailure struct {
+	ComponentID   uint   `json:"component_id"`
+	ComponentName string `json:"component_name,omitempty"`
+	StockQuantity int    `json:"stock_quantity,omitempty"`
+	Requested     int    `json:"requested"`
+	Error         string `json:"error"`
+}
+
+// BatchApplyStockOut 在单事务中批量出库；任一校验失败则整批回滚
+func (r *ComponentRepository) BatchApplyStockOut(items []BatchStockOutItem, reason string) ([]models.Component, []BatchStockOutFailure, error) {
+	var updated []models.Component
+	var failures []BatchStockOutFailure
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range items {
+			var component models.Component
+			if err := tx.First(&component, item.ComponentID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					failures = append(failures, BatchStockOutFailure{
+						ComponentID: item.ComponentID,
+						Requested:   item.Quantity,
+						Error:       "元件不存在",
+					})
+					continue
+				}
+				return err
+			}
+			if item.Quantity <= 0 {
+				failures = append(failures, BatchStockOutFailure{
+					ComponentID:   item.ComponentID,
+					ComponentName: component.Name,
+					StockQuantity: component.StockQuantity,
+					Requested:     item.Quantity,
+					Error:         "出库数量须大于 0",
+				})
+				continue
+			}
+			if component.StockQuantity < item.Quantity {
+				failures = append(failures, BatchStockOutFailure{
+					ComponentID:   item.ComponentID,
+					ComponentName: component.Name,
+					StockQuantity: component.StockQuantity,
+					Requested:     item.Quantity,
+					Error:         "库存不足",
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return ErrBatchStockOutFailed
+		}
+
+		updated = make([]models.Component, 0, len(items))
+		for _, item := range items {
+			component, err := applyStockChangeTx(tx, StockChangeParams{
+				ComponentID: item.ComponentID,
+				Amount:      -item.Quantity,
+				Reason:      reason,
+			})
+			if err != nil {
+				return err
+			}
+			updated = append(updated, *component)
+		}
+		return nil
+	})
+	if errors.Is(err, ErrBatchStockOutFailed) {
+		return nil, failures, ErrBatchStockOutFailed
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return updated, nil, nil
 }
 
 // BatchUpdateLocation 批量更新元件存放位置

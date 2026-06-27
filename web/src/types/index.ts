@@ -111,3 +111,17 @@ export interface DashboardStats {
   outbound_quantity: number;
   inbound_cost_cents: number;
 }
+
+export interface BatchStockOutFailure {
+  component_id: number;
+  component_name?: string;
+  stock_quantity?: number;
+  requested: number;
+  error: string;
+}
+
+export interface BatchStockOutResult {
+  updated: Component[];
+  total_quantity: number;
+  total_cost_cents: number;
+}

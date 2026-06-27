@@ -536,6 +536,73 @@ func (h *ComponentHandler) BatchUpdateLocation(c *gin.Context) {
 	})
 }
 
+// BatchStockOut 批量出库
+// @route POST /api/v1/components/batch-stock-out
+// Body: {"reason": "项目A", "items": [{"component_id": 1, "quantity": 5}]}
+func (h *ComponentHandler) BatchStockOut(c *gin.Context) {
+	var req struct {
+		Reason string `json:"reason"`
+		Items  []struct {
+			ComponentID uint `json:"component_id" binding:"required"`
+			Quantity    int  `json:"quantity" binding:"required"`
+		} `json:"items" binding:"required,min=1,dive"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+
+	seen := make(map[uint]struct{}, len(req.Items))
+	items := make([]repository.BatchStockOutItem, 0, len(req.Items))
+	for _, item := range req.Items {
+		if _, ok := seen[item.ComponentID]; ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "存在重复的元件 ID"})
+			return
+		}
+		seen[item.ComponentID] = struct{}{}
+		if item.Quantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "出库数量须大于 0"})
+			return
+		}
+		items = append(items, repository.BatchStockOutItem{
+			ComponentID: item.ComponentID,
+			Quantity:    item.Quantity,
+		})
+	}
+
+	updated, failures, err := h.componentRepo.BatchApplyStockOut(items, req.Reason)
+	if err != nil {
+		if errors.Is(err, repository.ErrBatchStockOutFailed) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":    "批量出库失败",
+				"failures": failures,
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量出库失败"})
+		return
+	}
+
+	var totalQuantity int
+	var totalCostCents int64
+	for i, item := range items {
+		totalQuantity += item.Quantity
+		if updated[i].UnitPriceMicro > 0 {
+			totalCostCents += price.OutboundTotalCents(updated[i].UnitPriceMicro, item.Quantity)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "批量出库成功",
+		"data": gin.H{
+			"updated":          updated,
+			"total_quantity":   totalQuantity,
+			"total_cost_cents": totalCostCents,
+		},
+	})
+}
+
 // GenerateMissingNumbers 为所有未编号元件自动生成编号
 // @route PATCH /api/v1/components/generate-numbers
 func (h *ComponentHandler) GenerateMissingNumbers(c *gin.Context) {
