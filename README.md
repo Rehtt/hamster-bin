@@ -145,6 +145,28 @@ docker run -d \
 docker build --build-arg VERSION=v1.0.0 -t hamster-bin:local .
 ```
 
+### Docker Compose
+
+推荐使用 `docker-compose.yml` 一键启动（默认从源码构建镜像，SQLite 数据持久化到 `./data` 目录）：
+
+```bash
+# 复制环境变量模板并按需修改（全部可配置项见 .env.example）
+cp .env.example .env
+
+# 启动（后台）
+docker compose up -d --build
+
+# 查看日志
+docker compose logs -f
+
+# 停止
+docker compose down
+```
+
+启用鉴权、HTTPS 或 LLM 辅助解析时，在 `.env` 中设置对应变量（`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`；`SSL_CERT` 与 `SSL_KEY`；`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`），详见下方「配置说明」。
+
+使用 GHCR 预构建镜像时，在 `docker-compose.yml` 中注释掉 `build` 段、取消 `image: ghcr.io/rehtt/hamster-bin:latest` 注释，然后执行 `docker compose up -d`（无需 `--build`）。
+
 ## 配置说明
 
 所有配置均通过环境变量提供。

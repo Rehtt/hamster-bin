@@ -1,0 +1,33 @@
+services:
+  hamster-bin:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-v1.0.0}
+    # image: ghcr.io/rehtt/hamster-bin:latest
+    # 使用预构建镜像时：取消上一行注释，并注释掉 build 段
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
+      # 启用 HTTPS 时取消注释，并将 SSL_CERT/SSL_KEY 设为容器内路径（如 /app/certs/cert.pem）
+      # - ./certs:/app/certs:ro
+    environment:
+      PORT: ${PORT:-8080}
+      DB_DRIVER: ${DB_DRIVER:-sqlite}
+      DB_DSN: ${DB_DSN:-}
+      DB_PATH: ${DB_PATH:-/app/data/inventory.db}
+      IMAGE_DIR: ${IMAGE_DIR:-/app/data/images}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SSL_CERT: ${SSL_CERT:-}
+      SSL_KEY: ${SSL_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-168}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    restart: unless-stopped

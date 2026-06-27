@@ -8,7 +8,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-alpine3.23 AS builder
 
 WORKDIR /src
 
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 go build \
     -o /hamster-bin \
     cmd/server/main.go
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.23
 
 WORKDIR /app
 
@@ -37,7 +37,5 @@ ENV PORT=8080 \
     IMAGE_DIR=/app/data/images
 
 EXPOSE 8080
-
-VOLUME ["/app/data"]
 
 ENTRYPOINT ["/app/hamster-bin"]
