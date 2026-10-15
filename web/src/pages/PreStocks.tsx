@@ -1,8 +1,12 @@
+import { useParseTask } from '../hooks/useParseTask';
+import { useTaskApplication } from '../hooks/useTaskApplication';
+import { ParseTaskStatus } from '../components/ParseTaskStatus';
+import { mergeParsed } from '../utils/parseResult';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Edit, Hash, Loader2, Minus, Plus, QrCode, Search, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Category, type ComponentOptions, type Pagination, type PreStock, type PreStockStatus, type Supplier } from '../types';
+import { type Category, type ComponentOptions, type Pagination, type PreStock, type PreStockStatus, type Supplier, type ParsedComponentInfo } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
@@ -39,19 +43,7 @@ type PreStockForm = {
   image_url: string;
 };
 
-type ParsedComponentInfo = {
-  name?: string;
-  category_name?: string;
-  model?: string;
-  value?: string;
-  package?: string;
-  platform_code?: string;
-  platform_name?: string;
-  description?: string;
-  manufacturer?: string;
-  datasheet_url?: string;
-  image_url?: string;
-};
+
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -103,7 +95,7 @@ export default function PreStocks() {
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const [platformCode, setPlatformCode] = useState('');
   const [useAIParse, setUseAIParse] = useState(false);
-  const [isParsing, setIsParsing] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -175,6 +167,7 @@ export default function PreStocks() {
   }, []);
 
   const openForm = (item?: PreStock) => {
+    parseTask.reset();
     if (item) {
       setEditingItem(item);
       setForm({
@@ -289,7 +282,7 @@ export default function PreStocks() {
         toast.success(number ? `已生成编号 ${number}` : '预入库记录已创建');
       }
 
-      setIsFormOpen(false);
+      parseTask.reset(); setIsFormOpen(false);
       await fetchItems(pagination.page, pagination.page_size);
       await fetchComponentOptions();
     } catch (error) {
@@ -300,62 +293,40 @@ export default function PreStocks() {
     }
   };
 
-  const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number) => {
-    setForm(prev => ({
-      ...prev,
-      name: component.name || component.model || prev.name,
-      model: component.model || prev.model,
-      manufacturer: component.manufacturer || prev.manufacturer,
-      value: component.value || prev.value,
-      package: component.package || prev.package,
-      supplier_part_number: component.platform_code || prev.supplier_part_number,
-      description: component.description || prev.description,
-      datasheet_url: component.datasheet_url || prev.datasheet_url,
-      image_url: component.image_url || prev.image_url,
-      expected_quantity: quantity && quantity > 0 ? quantity : prev.expected_quantity,
-    }));
-    if (component.category_name) setCategoryInput(component.category_name);
-    const supplierName = getSupplierNameFromPlatform(component.platform_name);
-    if (supplierName) setSupplierInput(supplierName);
+  type ParseSnapshot = { form: PreStockForm; category: string; supplier: string };
+  const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
+    const parsed: Partial<PreStockForm> = {
+      name: component.name || component.model,
+      model: component.model, manufacturer: component.manufacturer, value: component.value,
+      package: component.package, supplier_part_number: component.platform_code,
+      description: component.description, datasheet_url: component.datasheet_url, image_url: component.image_url,
+    };
+    if (quantity && quantity > 0) parsed.expected_quantity = quantity;
+    setForm(prev => mergeParsed(prev, parsed, snapshot?.form));
+    if (component.category_name) setCategoryInput(prev => !snapshot || prev === snapshot.category ? component.category_name! : prev);
+    const supplier = getSupplierNameFromPlatform(component.platform_name);
+    if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
   };
-
+  const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => applyParsedComponent(result.component, result.quantity, snapshot));
+  const isParsing = parseTask.busy;
+  const parseSnapshot = (): ParseSnapshot => ({ form: { ...form }, category: categoryInput, supplier: supplierInput });
   const parsePlatform = async () => {
     const code = platformCode.trim();
-    if (!code) {
-      toast.error('请输入供应商料号');
-      return;
-    }
-    setIsParsing(true);
-    try {
-      const res = await client.post('/components/parse', { code, use_llm: useAIParse });
-      applyParsedComponent(res.data.data as ParsedComponentInfo);
-      toast.success('解析成功');
-    } catch (error) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '解析失败');
-    } finally {
-      setIsParsing(false);
-    }
+    if (!code) { toast.error('请输入供应商料号'); return; }
+    await parseTask.start({ type: 'component_parse', input: { code, use_llm: useAIParse }, source: 'pre-stocks', record_id: editingItem?.id }, parseSnapshot());
   };
-
   const handleScan = async (data: string) => {
     if (isParsing) return;
     setIsScannerOpen(false);
-    setIsParsing(true);
-    try {
-      const res = await client.post('/components/parse-qrcode', { qrcode_data: data, use_llm: useAIParse });
-      const parsed = res.data.data as { component: ParsedComponentInfo; quantity: number };
-      applyParsedComponent(parsed.component, parsed.quantity);
-      setPlatformCode(parsed.component.platform_code || '');
-      toast.success('已识别预入库信息');
-      if (!isFormOpen) setIsFormOpen(true);
-    } catch (error) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '二维码解析失败');
-    } finally {
-      setIsParsing(false);
-    }
+    let snapshot = parseSnapshot();
+    if (!isFormOpen) { openForm(); snapshot = { form: { ...EMPTY_FORM }, category: '', supplier: '' }; }
+    await parseTask.start({ type: 'qrcode_parse', input: { qrcode_data: data, use_llm: useAIParse }, source: 'pre-stocks', record_id: isFormOpen ? editingItem?.id : undefined }, snapshot);
   };
+  useTaskApplication<PreStock>('pre-stocks', (task, record) => {
+    openForm(record);
+    applyParsedComponent(task.result!.component, task.result!.quantity);
+    setPlatformCode(task.result!.component.platform_code || '');
+  });
 
   const handleConfirm = async (item: PreStock) => {
     if (!confirm(`确认将 ${item.component_number || item.name} 转为正式入库？`)) return;
@@ -590,12 +561,12 @@ export default function PreStocks() {
 
       <Modal
         isOpen={isFormOpen}
-        onClose={() => setIsFormOpen(false)}
+        onClose={() => { parseTask.reset(); setIsFormOpen(false); }}
         title={editingItem ? '编辑预入库' : '新建预入库'}
         className="max-w-2xl"
         footer={
           <>
-            <Button variant="outline" onClick={() => setIsFormOpen(false)} disabled={saving}>取消</Button>
+            <Button variant="outline" onClick={() => { parseTask.reset(); setIsFormOpen(false); }} disabled={saving}>取消</Button>
             <Button onClick={handleSubmit} disabled={saving}>
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />保存中...</> : '保存'}
             </Button>
@@ -605,12 +576,12 @@ export default function PreStocks() {
         <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
           <div className="bg-secondary/20 p-4 rounded-md space-y-4">
             <Label>快速导入</Label>
+            <ParseTaskStatus task={parseTask.task} />
             <div className="flex gap-2">
               <Input
                 placeholder="输入平台编码 (如 C2040)"
                 value={platformCode}
                 onChange={e => setPlatformCode(e.target.value)}
-                disabled={isParsing}
               />
               <Button onClick={parsePlatform} disabled={isParsing || !platformCode.trim()}>
                 {isParsing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />解析中...</> : '解析'}
@@ -624,7 +595,6 @@ export default function PreStocks() {
                 type="checkbox"
                 checked={useAIParse}
                 onChange={e => setUseAIParse(e.target.checked)}
-                disabled={isParsing}
                 className="h-4 w-4 rounded border-input disabled:opacity-50"
               />
               AI 解析

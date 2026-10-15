@@ -125,3 +125,42 @@ export interface BatchStockOutResult {
   total_quantity: number;
   total_cost_cents: number;
 }
+
+export interface ParsedComponentInfo {
+  name?: string;
+  category_name?: string;
+  model?: string;
+  value?: string;
+  package?: string;
+  platform_code?: string;
+  platform_name?: string;
+  description?: string;
+  manufacturer?: string;
+  price?: number;
+  datasheet_url?: string;
+  image_url?: string;
+  category?: Category;
+}
+export interface TaskResult {
+  component: ParsedComponentInfo;
+  quantity?: number;
+  qrcode_info?: { code: string; quantity: number; raw_data: string; platform: string };
+}
+export interface TaskRequest {
+  type: 'component_parse' | 'qrcode_parse';
+  input: { code?: string; qrcode_data?: string; use_llm: boolean };
+  source: 'components' | 'pre-stocks';
+  record_id?: number;
+}
+export interface ParseTask extends Omit<TaskRequest, 'source'> {
+  id: number;
+  source: TaskRequest['source'] | '';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  result: TaskResult | null;
+  error?: string;
+  error_code?: string;
+  retry_of_id?: number;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+}

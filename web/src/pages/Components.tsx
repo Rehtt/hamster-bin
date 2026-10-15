@@ -1,3 +1,7 @@
+import { useParseTask } from '../hooks/useParseTask';
+import { useTaskApplication } from '../hooks/useTaskApplication';
+import { ParseTaskStatus } from '../components/ParseTaskStatus';
+import { mergeParsed } from '../utils/parseResult';
 import { lazy, Suspense, useEffect, useState, useRef } from 'react';
 import {
   DndContext,
@@ -19,7 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Loader2, Hash, Download, Coins, Columns3, GripVertical, PackageMinus } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions } from '../types';
+import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions, type ParsedComponentInfo } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
@@ -303,21 +307,7 @@ const persistComponentSort = (sortBy: ExportColumnKey, sortOrder: ComponentSortO
   }
 };
 
-type ParsedComponentInfo = {
-  name?: string;
-  category_name?: string;
-  model?: string;
-  value?: string;
-  package?: string;
-  platform_code?: string;
-  platform_name?: string;
-  description?: string;
-  manufacturer?: string;
-  price?: number;
-  datasheet_url?: string;
-  image_url?: string;
-  category?: Category;
-};
+
 
 type SortableColumnRowProps = {
   column: ColumnState;
@@ -542,7 +532,7 @@ export default function Components() {
 
   // Platform Import
   const [platformCode, setPlatformCode] = useState('');
-  const [isImportParsing, setIsImportParsing] = useState(false);
+
   const [useAIParse, setUseAIParse] = useState(false);
 
   const [isMobile, setIsMobile] = useState(false);
@@ -565,24 +555,27 @@ export default function Components() {
     image_url: info.image_url || '',
   });
 
-  const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number) => {
+  type ParseSnapshot = { form: Partial<Component>; category: string; supplier: string; price: string; preview: string; file: File | null };
+  const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
     const parsedForm = parsedInfoToFormData(component);
-    setSupplierInput(getSupplierNameFromPlatform(component.platform_name));
-    if (component.category_name || component.category?.name) {
-      setCategoryInput(component.category_name || component.category?.name || '');
+    if (snapshot && selectedFile !== snapshot.file) delete parsedForm.image_url;
+    if (quantity && quantity > 0) parsedForm.stock_quantity = quantity;
+    const supplier = getSupplierNameFromPlatform(component.platform_name);
+    if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
+    const category = component.category_name || component.category?.name;
+    if (category) setCategoryInput(prev => !snapshot || prev === snapshot.category ? category : prev);
+    setFormData(prev => mergeParsed(prev, parsedForm, snapshot?.form));
+    if (component.image_url && (!snapshot || selectedFile === snapshot.file)) {
+      setPreviewUrl(prev => !snapshot || prev === snapshot.preview ? '' : prev);
     }
-    setFormData(prev => ({
-      ...prev,
-      ...Object.fromEntries(
-        Object.entries(parsedForm).filter(([, v]) => v !== '' && v !== undefined)
-      ),
-      stock_quantity: quantity && quantity > 0 ? quantity : prev.stock_quantity,
-    }));
     if (component.price && component.price > 0) {
       const qty = quantity && quantity > 0 ? quantity : 1;
-      setFormTotalPriceYuan((component.price * qty).toFixed(2));
+      setFormTotalPriceYuan(prev => !snapshot || prev === snapshot.price ? (component.price! * qty).toFixed(2) : prev);
     }
   };
+  const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => applyParsedComponent(result.component, result.quantity, snapshot));
+  const isImportParsing = parseTask.busy;
+  const parseSnapshot = (): ParseSnapshot => ({ form: { ...formData }, category: categoryInput, supplier: supplierInput, price: formTotalPriceYuan, preview: previewUrl, file: selectedFile });
 
   useEffect(() => {
     const checkMobile = () => {
@@ -1042,6 +1035,7 @@ export default function Components() {
 
   // Form Handlers
   const openForm = (component?: Component) => {
+    parseTask.reset();
     setSelectedFile(null);
     setShowImageMenu(false);
     setIsCopyingComponent(false);
@@ -1071,6 +1065,7 @@ export default function Components() {
   };
 
   const openCopyForm = (component: Component) => {
+    parseTask.reset();
     setSelectedFile(null);
     setShowImageMenu(false);
     setEditingComponent(null);
@@ -1205,7 +1200,7 @@ export default function Components() {
           }
       }
 
-      setIsFormOpen(false);
+      parseTask.reset(); setIsFormOpen(false);
       fetchComponents(pagination.page, pagination.page_size);
       fetchComponentOptions();
     } catch (error) {
@@ -1217,23 +1212,14 @@ export default function Components() {
 
   const parsePlatform = async (code?: string) => {
     const parseCode = (code ?? platformCode).trim();
-    if (!parseCode || isImportParsing) {
-      if (!parseCode) toast.error('请输入供应商料号');
-      return;
-    }
-    setIsImportParsing(true);
-    try {
-      const res = await client.post('/components/parse', { code: parseCode, use_llm: useAIParse });
-      const data = res.data.data as ParsedComponentInfo;
-      applyParsedComponent(data);
-      toast.success('解析成功');
-    } catch (error) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '解析失败');
-    } finally {
-      setIsImportParsing(false);
-    }
+    if (!parseCode) { toast.error('请输入供应商料号'); return; }
+    await parseTask.start({ type: 'component_parse', input: { code: parseCode, use_llm: useAIParse }, source: 'components', record_id: editingComponent?.id }, parseSnapshot());
   };
+
+  useTaskApplication<Component>('components', (task, record) => {
+    openForm(record);
+    applyParsedComponent(task.result!.component, task.result!.quantity);
+  });
 
   // Stock Handlers
   const openStock = (component: Component) => {
@@ -1339,25 +1325,12 @@ export default function Components() {
   const handleScan = async (data: string) => {
     if (isImportParsing) return;
     setIsScannerOpen(false);
-    setIsImportParsing(true);
-    try {
-      const res = await client.post('/components/parse-qrcode', { qrcode_data: data, use_llm: useAIParse });
-      const { component, quantity } = res.data.data as { component: ParsedComponentInfo; quantity: number };
-
-      if (isFormOpen) {
-        applyParsedComponent(component, quantity);
-        toast.success('已识别元件信息');
-      } else {
-        toast.success(`识别成功: ${component.name}`);
-        openForm(parsedInfoToFormData(component) as Component);
-        applyParsedComponent(component, quantity);
-      }
-    } catch (error) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '二维码解析失败');
-    } finally {
-      setIsImportParsing(false);
+    let snapshot = parseSnapshot();
+    if (!isFormOpen) {
+      openForm();
+      snapshot = { form: { stock_quantity: 0 }, category: '', supplier: '', price: '', preview: '', file: null };
     }
+    await parseTask.start({ type: 'qrcode_parse', input: { qrcode_data: data, use_llm: useAIParse }, source: 'components', record_id: isFormOpen ? editingComponent?.id : undefined }, snapshot);
   };
 
   return (
@@ -1768,12 +1741,12 @@ export default function Components() {
       {/* Edit/Add Modal */}
       <Modal 
         isOpen={isFormOpen} 
-        onClose={() => setIsFormOpen(false)} 
+        onClose={() => { parseTask.reset(); setIsFormOpen(false); }}
         title={editingComponent ? '编辑元件' : isCopyingComponent ? '复制元件' : '添加元件'}
         footer={
           <>
-            <Button variant="outline" onClick={() => setIsFormOpen(false)} disabled={isImportParsing && !editingComponent}>取消</Button>
-            <Button onClick={handleFormSubmit} disabled={isImportParsing && !editingComponent}>保存</Button>
+            <Button variant="outline" onClick={() => { parseTask.reset(); setIsFormOpen(false); }}>取消</Button>
+            <Button onClick={handleFormSubmit}>保存</Button>
           </>
         }
         className="max-w-2xl"
@@ -1782,6 +1755,7 @@ export default function Components() {
              {/* Import Tools */}
              <div className="bg-secondary/20 p-4 rounded-md space-y-4">
                 <Label>{editingComponent ? '根据供应商料号更新' : '快速导入'}</Label>
+                <ParseTaskStatus task={parseTask.task} />
                 <div className="flex gap-2">
                     <Input
                       placeholder="输入平台编码 (如 C2040)"
@@ -1793,7 +1767,6 @@ export default function Components() {
                           setPlatformCode(e.target.value);
                         }
                       }}
-                      disabled={isImportParsing}
                     />
                     <Button
                       onClick={() => parsePlatform(editingComponent ? formData.supplier_part_number : undefined)}
@@ -1817,7 +1790,6 @@ export default function Components() {
                         type="checkbox"
                         checked={useAIParse}
                         onChange={e => setUseAIParse(e.target.checked)}
-                        disabled={isImportParsing}
                         className="h-4 w-4 rounded border-input disabled:opacity-50"
                     />
                     AI 解析（平台编码 / 扫码）
@@ -2495,16 +2467,7 @@ export default function Components() {
         </div>
       </Modal>
 
-      {isImportParsing && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-lg border bg-background px-8 py-6 shadow-lg">
-            <Loader2 className="h-10 w-10 animate-spin text-primary" />
-            <p className="text-sm font-medium">
-              {useAIParse ? 'AI 解析中，请稍候...' : '正在解析元件信息...'}
-            </p>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

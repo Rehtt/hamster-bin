@@ -76,7 +76,7 @@ func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*Componen
 	}
 
 	url := fmt.Sprintf("https://www.jlc-smt.com/lcsc/detail/%s.html", code)
-	doc, pageText, err := p.fetchDetailDocument(url)
+	doc, pageText, err := p.fetchDetailDocumentContext(parseOptions.ExecutionContext(), url)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*Componen
 				PlatformURL:  url,
 			}
 		}
-		if err := p.enrichWithLLM(context.Background(), info, pageText); err != nil {
+		if err := p.enrichWithLLM(parseOptions.ExecutionContext(), info, pageText); err != nil {
 			return nil, err
 		}
 		if info.Name == "" {
@@ -106,7 +106,11 @@ func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*Componen
 }
 
 func (p *LCSCParser) fetchDetailDocument(url string) (*goquery.Document, string, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	return p.fetchDetailDocumentContext(context.Background(), url)
+}
+
+func (p *LCSCParser) fetchDetailDocumentContext(ctx context.Context, url string) (*goquery.Document, string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("创建请求失败: %w: %w", err, ErrParserUpstream)
 	}
@@ -287,4 +291,11 @@ name, category_name, model, value, package, description, manufacturer, datasheet
 
 func normalizeWhitespace(value string) string {
 	return strings.Join(strings.Fields(value), " ")
+}
+
+func (p *LCSCParser) ValidateOptions(options ParseOptions) error {
+	if options.UseLLM && (p.llm == nil || !p.llm.Configured()) {
+		return llm.ErrNotConfigured
+	}
+	return nil
 }

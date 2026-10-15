@@ -11,6 +11,7 @@ const navItems = [
   { name: '元件管理', href: '/components', icon: Package },
   { name: '预入库', href: '/pre-stocks', icon: ClipboardList },
   { name: '分类管理', href: '/categories', icon: FolderTree },
+  { name: '任务中心', href: '/tasks', icon: ClipboardList },
   { name: '库存记录', href: '/logs', icon: History },
 ];
 

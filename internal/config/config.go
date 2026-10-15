@@ -12,21 +12,23 @@ const defaultDBPath = "./data/inventory.db"
 
 // Config 应用配置
 type Config struct {
-	Port           string
-	DBDriver       string
-	DBDSN          string
-	DBPath         string
-	ImageDir       string
-	LogLevel       string
-	SSLCert        string
-	SSLKey         string
-	LLMBaseURL     string
-	LLMAPIKey      string
-	LLMModel       string
-	AdminUsername  string
-	AdminPassword  string
-	JWTSecret      string
-	JWTExpireHours int
+	TaskWorkers        int
+	TaskTimeoutSeconds int
+	Port               string
+	DBDriver           string
+	DBDSN              string
+	DBPath             string
+	ImageDir           string
+	LogLevel           string
+	SSLCert            string
+	SSLKey             string
+	LLMBaseURL         string
+	LLMAPIKey          string
+	LLMModel           string
+	AdminUsername      string
+	AdminPassword      string
+	JWTSecret          string
+	JWTExpireHours     int
 }
 
 // Load 加载配置（支持环境变量）
@@ -39,21 +41,23 @@ func Load() *Config {
 	}
 
 	cfg := &Config{
-		Port:           getEnv("PORT", "8080"),
-		DBDriver:       normalizeDBDriver(getEnv("DB_DRIVER", "sqlite")),
-		DBDSN:          getEnv("DB_DSN", ""),
-		DBPath:         getEnv("DB_PATH", defaultDBPath),
-		LogLevel:       getEnv("LOG_LEVEL", "info"),
-		ImageDir:       getEnv("IMAGE_DIR", "./data/images"),
-		SSLCert:        getEnv("SSL_CERT", ""),
-		SSLKey:         getEnv("SSL_KEY", ""),
-		LLMBaseURL:     getEnv("LLM_BASE_URL", ""),
-		LLMAPIKey:      getEnv("LLM_API_KEY", ""),
-		LLMModel:       getEnv("LLM_MODEL", ""),
-		AdminUsername:  getEnv("ADMIN_USERNAME", ""),
-		AdminPassword:  getEnv("ADMIN_PASSWORD", ""),
-		JWTSecret:      getEnv("JWT_SECRET", ""),
-		JWTExpireHours: expireHours,
+		TaskWorkers:        positiveEnv("TASK_WORKERS", 2),
+		TaskTimeoutSeconds: positiveEnv("TASK_TIMEOUT_SECONDS", 120),
+		Port:               getEnv("PORT", "8080"),
+		DBDriver:           normalizeDBDriver(getEnv("DB_DRIVER", "sqlite")),
+		DBDSN:              getEnv("DB_DSN", ""),
+		DBPath:             getEnv("DB_PATH", defaultDBPath),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		ImageDir:           getEnv("IMAGE_DIR", "./data/images"),
+		SSLCert:            getEnv("SSL_CERT", ""),
+		SSLKey:             getEnv("SSL_KEY", ""),
+		LLMBaseURL:         getEnv("LLM_BASE_URL", ""),
+		LLMAPIKey:          getEnv("LLM_API_KEY", ""),
+		LLMModel:           getEnv("LLM_MODEL", ""),
+		AdminUsername:      getEnv("ADMIN_USERNAME", ""),
+		AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
+		JWTSecret:          getEnv("JWT_SECRET", ""),
+		JWTExpireHours:     expireHours,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -119,4 +123,12 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func positiveEnv(key string, fallback int) int {
+	value, err := strconv.Atoi(os.Getenv(key))
+	if err == nil && value > 0 {
+		return value
+	}
+	return fallback
 }

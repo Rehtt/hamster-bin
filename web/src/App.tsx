@@ -4,12 +4,14 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import { TaskProvider } from './context/TaskContext';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Components = lazy(() => import('./pages/Components'));
 const PreStocks = lazy(() => import('./pages/PreStocks'));
 const Categories = lazy(() => import('./pages/Categories'));
+const Tasks = lazy(() => import('./pages/Tasks'));
 const StockLogs = lazy(() => import('./pages/StockLogs'));
 
 function PageLoader() {
@@ -31,15 +33,16 @@ function App() {
               path="/*"
               element={
                 <ProtectedRoute>
-                  <Layout>
+                  <TaskProvider><Layout>
                     <Routes>
                       <Route path="/" element={<Dashboard />} />
                       <Route path="/components" element={<Components />} />
                       <Route path="/pre-stocks" element={<PreStocks />} />
                       <Route path="/categories" element={<Categories />} />
+                      <Route path="/tasks" element={<Tasks />} />
                       <Route path="/logs" element={<StockLogs />} />
                     </Routes>
-                  </Layout>
+                  </Layout></TaskProvider>
                 </ProtectedRoute>
               }
             />

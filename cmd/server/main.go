@@ -1,9 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"github.com/Rehtt/hamster-bin/internal/repository"
+	"github.com/Rehtt/hamster-bin/internal/tasks"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/Rehtt/hamster-bin/internal/config"
 	"github.com/Rehtt/hamster-bin/internal/database"
@@ -38,7 +46,12 @@ func main() {
 	parserManager.Register(parser.NewTaobaoParser())        // 注册淘宝解析器（示例）
 
 	// 设置路由
-	r := router.Setup(database.GetDB(), parserManager, cfg)
+	taskService := tasks.New(repository.NewTaskRepository(database.GetDB()), parserManager, cfg.TaskWorkers, time.Duration(cfg.TaskTimeoutSeconds)*time.Second)
+	if err := taskService.Start(); err != nil {
+		log.Fatalf("任务服务启动失败: %v", err)
+	}
+	defer taskService.Stop()
+	r := router.Setup(database.GetDB(), parserManager, cfg, taskService)
 
 	// 启动服务器
 	addr := ":" + cfg.Port
@@ -49,14 +62,29 @@ func main() {
 	fmt.Printf("💾 数据库: %s (%s)\n", cfg.DBDriver, cfg.DatabaseDisplay())
 	fmt.Printf("🔌 支持平台: %v\n\n", parserManager.GetAvailableParsers())
 
-	if cfg.SSLCert != "" && cfg.SSLKey != "" {
-		fmt.Printf("🔒 启用HTTPS服务\n")
-		if err := r.RunTLS(addr, cfg.SSLCert, cfg.SSLKey); err != nil {
-			log.Fatalf("服务器启动失败: %v", err)
+	server := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 10 * time.Second}
+	signals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	serverError := make(chan error, 1)
+	go func() {
+		if cfg.IsHTTPS() {
+			serverError <- server.ListenAndServeTLS(cfg.SSLCert, cfg.SSLKey)
+		} else {
+			serverError <- server.ListenAndServe()
 		}
-	} else {
-		if err := r.Run(addr); err != nil {
-			log.Fatalf("服务器启动失败: %v", err)
+	}()
+	select {
+	case <-signals.Done():
+	case err := <-serverError:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("服务器退出: %v", err)
 		}
+	}
+	// 先停止领取并中断任务；运行中的任务记录为服务中断，排队任务留待下次启动。
+	taskService.Stop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("关闭 HTTP 服务失败: %v", err)
 	}
 }

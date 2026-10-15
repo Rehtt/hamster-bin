@@ -59,7 +59,7 @@ func (h *ParserHandler) ParseComponent(c *gin.Context) {
 	}
 
 	// 调用解析器
-	info, err := h.manager.ParseWithOptions(req.Code, parser.ParseOptions{UseLLM: req.UseLLM})
+	info, err := h.manager.ParseWithOptions(req.Code, parser.ParseOptions{UseLLM: req.UseLLM, Context: c.Request.Context()})
 	if err != nil {
 		status, message := parseErrorResponse(err)
 		c.JSON(status, gin.H{"error": message})
@@ -99,7 +99,7 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 	}
 
 	// 使用提取的编码调用解析器获取元件信息
-	info, err := h.manager.ParseWithOptions(qrData.Code, parser.ParseOptions{UseLLM: req.UseLLM})
+	info, err := h.manager.ParseWithOptions(qrData.Code, parser.ParseOptions{UseLLM: req.UseLLM, Context: c.Request.Context()})
 	if err != nil {
 		status, message := parseErrorResponse(err)
 		c.JSON(status, gin.H{

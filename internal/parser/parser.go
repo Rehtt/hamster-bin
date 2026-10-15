@@ -1,6 +1,10 @@
 package parser
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"strings"
+)
 
 // ComponentInfo 从平台解析出的元件信息
 type ComponentInfo struct {
@@ -33,7 +37,8 @@ type Parser interface {
 
 // ParseOptions 解析选项
 type ParseOptions struct {
-	UseLLM bool `json:"use_llm"`
+	UseLLM  bool            `json:"use_llm"`
+	Context context.Context `json:"-"`
 }
 
 // OptionParser 支持可选解析策略的平台解析器
@@ -105,4 +110,27 @@ func (m *ParserManager) GetAvailableParsers() []string {
 		names = append(names, parser.GetName())
 	}
 	return names
+}
+
+// Validate 在入队前验证编码和配置，不发起网络请求。
+func (m *ParserManager) Validate(code string, options ParseOptions) error {
+	if len(m.parsers) == 0 {
+		return ErrNoParsersAvailable
+	}
+	for _, p := range m.parsers {
+		if p.CanParse(strings.TrimSpace(code)) {
+			if v, ok := p.(interface{ ValidateOptions(ParseOptions) error }); ok {
+				return v.ValidateOptions(options)
+			}
+			return nil
+		}
+	}
+	return ErrNoParserMatched
+}
+
+func (o ParseOptions) ExecutionContext() context.Context {
+	if o.Context != nil {
+		return o.Context
+	}
+	return context.Background()
 }

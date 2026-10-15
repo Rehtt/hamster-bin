@@ -20,6 +20,7 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 - 价格管理：入库总价按数量分摊为单价，元件参考单价按库存加权平均更新。
 - 数据导出：按当前筛选条件导出 CSV，并支持自定义导出列和表头。
 - 平台解析：支持立创商城/LCSC 编码解析，二维码解析可提取平台编码和数量。
+- 持久化后台解析：元件与预入库的编码、二维码和 AI 解析提交后立即返回任务编号，可继续编辑或关闭表单。任务中心支持结果恢复、失败重试和取消，跨页面显示完成提示；结果需确认保存后才写入业务数据。
 - 可选 AI 辅助解析：配置 OpenAI-compatible API 后，可辅助解析元件参数。
 - 图片与资料：支持元件图片上传、Datasheet 链接和描述信息。
 - 可选登录鉴权：通过环境变量启用单管理员登录，使用 HttpOnly Cookie 保存 JWT。
@@ -185,6 +186,8 @@ docker compose down
 | `ADMIN_PASSWORD` | 空 | 管理员密码 |
 | `JWT_SECRET` | 空 | JWT 签名密钥；启用鉴权时必填 |
 | `JWT_EXPIRE_HOURS` | `168` | JWT 有效期，单位为小时 |
+| `TASK_WORKERS` | `2` | 后台任务并发数，正整数 |
+| `TASK_TIMEOUT_SECONDS` | `120` | 单个任务从开始执行计时的超时秒数，正整数 |
 | `LLM_BASE_URL` | 空 | OpenAI-compatible API base，例如 `https://api.openai.com/v1` |
 | `LLM_API_KEY` | 空 | LLM API Key |
 | `LLM_MODEL` | 空 | LLM 模型名称 |
@@ -267,7 +270,12 @@ go test . ./cmd/... ./internal/...
 - `/api/v1/components`：元件列表、创建、更新、删除、导出和库存操作。
 - `/api/v1/stock-logs`：库存流水查询与撤销。
 - `/api/v1/stats`：仪表盘统计数据。
+- `/api/v1/tasks`：后台任务提交（POST，返回 202）、分页查询（GET，支持 `status`、`type`）；`/:id` 查询详情，`/:id/cancel` 取消，`/:id/retry` 新建重试任务（POST，返回 202）。
 - `/api/v1/platforms`：可用解析平台。
+
+任务提交示例：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`。扫码使用 `qrcode_parse` 和 `input.qrcode_data`；`source` 可为 `components` 或 `pre-stocks`，编辑记录可带 `record_id`。旧 `/components/parse`、`/components/parse-qrcode` 仍保持同步接口。
+
+任务与业务数据使用同一数据库，服务重启后继续处理排队任务，运行中任务标记为“服务中断”并允许手动重试。当前按单服务实例运行，不支持多实例调度，不自动重试、删除或清理历史。任务中心“应用结果”会重新读取最新编辑记录；记录已删除或预入库已确认时，可选择作为新增表单使用。刷新后可取回解析结果，但不恢复未保存的完整表单草稿。
 
 ## 数据与文件
 

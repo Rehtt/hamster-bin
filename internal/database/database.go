@@ -118,6 +118,7 @@ func autoMigrate() error {
 		&models.Component{},
 		&models.PreStock{},
 		&models.StockLog{},
+		&models.Task{},
 	)
 }
 

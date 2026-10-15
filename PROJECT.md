@@ -22,7 +22,7 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 ├── embed.go                   # 将 web/dist 嵌入 Go 二进制
 ├── cmd/
 │   └── server/
-│       └── main.go            # 服务入口：处理 --version、加载配置、初始化数据库、注册解析器、启动路由
+│       └── main.go            # 服务入口：处理 --version、加载配置、初始化数据库、注册解析器、管理任务 worker 与 HTTP 服务信号退出
 ├── internal/
 │   ├── config/                # 环境变量配置加载
 │   ├── auth/                  # JWT 签发/解析与凭据校验
@@ -30,9 +30,10 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 │   ├── handlers/              # Gin HTTP handlers，处理分类、供应商、元件、库存日志、解析和鉴权请求
 │   ├── middleware/            # Gin 中间件（鉴权）
 │   ├── llm/                   # OpenAI-compatible Chat Completions 客户端
-│   ├── models/                # GORM 数据模型：Category、Supplier、Component、PreStock、StockLog
+│   ├── models/                # GORM 数据模型：Category、Supplier、Component、PreStock、StockLog、Task
 │   ├── price/                 # 单价（微元）与总价（分）换算及加权平均
 │   ├── parser/                # 平台解析器、二维码解析、解析器管理器和解析测试
+│   ├── tasks/                 # 持久化队列执行、校验、超时、取消、重试与中断恢复
 │   ├── repository/            # 数据访问封装，按业务实体拆分
 │   ├── router/                # API 路由、CORS、嵌入式前端静态文件服务和 SPA fallback
 │   └── version/               # 项目版本变量，默认 v1.0.0，release 构建时通过 ldflags 注入 git tag
@@ -63,14 +64,14 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 
 ## 后端结构
 
-- `cmd/server/main.go` 是唯一服务入口。它支持 `--version` 输出版本；正常启动时调用 `config.Load()`、`database.Init()`、注册 `parser.ParserManager`，然后通过 `router.Setup(db, parserManager, cfg)` 启动 Gin 服务。
-- `internal/config/config.go` 从环境变量读取配置，当前包含 `PORT`、`DB_DRIVER`、`DB_DSN`、`DB_PATH`、`IMAGE_DIR`、`LOG_LEVEL`、`SSL_CERT`、`SSL_KEY`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`、`JWT_EXPIRE_HOURS`。当 `ADMIN_USERNAME` 与 `ADMIN_PASSWORD` 均非空时启用鉴权，此时 `JWT_SECRET` 必填。
+- `cmd/server/main.go` 是唯一服务入口。它支持 `--version` 输出版本；正常启动时调用 `config.Load()`、`database.Init()`、注册 `parser.ParserManager`，然后通过 `router.Setup(db, parserManager, cfg, taskService)` 启动 Gin 服务。
+- `internal/config/config.go` 从环境变量读取配置，当前包含 `PORT`、`DB_DRIVER`、`DB_DSN`、`DB_PATH`、`IMAGE_DIR`、`LOG_LEVEL`、`SSL_CERT`、`SSL_KEY`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`、`JWT_EXPIRE_HOURS`、`TASK_WORKERS`、`TASK_TIMEOUT_SECONDS`。当 `ADMIN_USERNAME` 与 `ADMIN_PASSWORD` 均非空时启用鉴权，此时 `JWT_SECRET` 必填。
 - `internal/auth/` 负责 JWT 签发/解析（Cookie 名 `hamster_token`）和管理员凭据恒定时间比较。
 - `internal/middleware/auth.go` 在鉴权启用时校验 Cookie JWT，保护业务 API。
-- `internal/database/database.go` 按 `DB_DRIVER` 打开 SQLite/MySQL/PostgreSQL 的 GORM 连接；SQLite 会创建数据目录并设置 pragma，所有数据库都会自动迁移 `Category`、`Supplier`、`Component`、`PreStock`、`StockLog`。
+- `internal/database/database.go` 按 `DB_DRIVER` 打开 SQLite/MySQL/PostgreSQL 的 GORM 连接；SQLite 会创建数据目录并设置 pragma，所有数据库都会自动迁移 `Category`、`Supplier`、`Component`、`PreStock`、`StockLog`、`Task`。
 - `internal/models/models.go` 定义数据库表结构和 JSON 字段，是前后端数据契约的重要来源。
 - `internal/router/router.go` 暴露 `/api/v1` API；`/api/v1/auth/*` 为公开路由，其余业务接口在鉴权启用时需登录。静态资源仍从嵌入的 `web/dist` 提供。
-- `internal/handlers/` 负责 HTTP 输入输出和状态码。业务实体目前按 `category`、`supplier`、`component`、`stock_log`、`stats`、`parser`、`auth` 拆分。
+- `internal/handlers/` 负责 HTTP 输入输出和状态码。业务实体目前按 `category`、`supplier`、`component`、`stock_log`、`stats`、`parser`、`tasks`、`auth` 拆分。
 - `internal/price/price.go` 集中实现单价分摊（`UnitPriceMicro`）、出库成本（`OutboundTotalCents`）、加权平均（`WeightedAverageUnitPriceMicro`）与撤销反算（`ReverseAverageUnitPriceMicro`）；repository 与 handler 应复用此包，避免重复四舍五入逻辑。
 - `internal/repository/` 封装数据库访问。新增复杂查询时优先放在 repository，避免 handler 直接堆叠大量查询逻辑。
 - `internal/version/` 保存项目版本变量，默认版本为 `v1.0.0`；发布构建通过 Makefile 的 `VERSION` 变量注入 git tag。
@@ -79,7 +80,7 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 
 ## 前端结构
 
-- `web/src/App.tsx` 定义 SPA 页面路由：`/`、`/components`、`/pre-stocks`、`/categories`、`/logs`、`/login`。业务页面包裹 `ProtectedRoute` 与 `Layout`；登录页不使用侧边栏。各页面通过 `React.lazy` 按路由懒加载，路由切换时显示 Suspense 加载占位。
+- `web/src/App.tsx` 定义 SPA 页面路由：`/`、`/components`、`/pre-stocks`、`/categories`、`/logs`、`/tasks`、`/login`。业务页面包裹 `ProtectedRoute` 与 `Layout`；登录页不使用侧边栏。各页面通过 `React.lazy` 按路由懒加载，路由切换时显示 Suspense 加载占位。
 - `web/src/context/AuthContext.tsx` 提供 `AuthProvider`，启动时调用 `GET /auth/me` 并维护 `login`、`logout` 和鉴权状态；`context/auth.ts` 定义共享 Context 与类型，`context/useAuth.ts` 提供读取鉴权状态的 hook。为满足 React Fast Refresh 规则，组件文件不导出非组件 hook。
 - `web/src/api/client.ts` 是统一 Axios 客户端，API 前缀固定为 `/api/v1`，`withCredentials: true` 以携带 HttpOnly Cookie；401 时跳转 `/login`（`/auth/me` 与 `/auth/login` 除外）。
 - `web/src/pages/` 存放业务页面：仪表盘、元件管理、预入库、分类管理、库存日志。供应商当前不设独立页面，在元件/预入库表单内输入/选择并自动创建。库存日志页支持显示总数和切换每页条数。仪表盘（`Dashboard.tsx`）通过 `GET /stats` 展示元件/分类/库存概览、库存总价值，以及按时间范围（本月/本季/全部）筛选的累计入库金额、入库数量、出库数量。
@@ -107,7 +108,7 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 - 平台解析结果中的 `platform_name` 用于前端推断供应商名称；当前立创/LCSC 导入映射为“嘉立创”，`platform_code` 写入 `supplier_part_number`，`name` 使用商品页名称，`model` 写入厂家型号，`manufacturer` 写入制造商，`category_name` 使用商品目录并写入前端分类输入框，保存时按现有逻辑关联或自动创建分类。
 - 元件列表搜索支持分字段 query：`component_number`、`name`、`model`、`manufacturer`、`value`、`supplier`（匹配供应商名称）、`supplier_part_number`；同一字段内按空格拆词，词之间 AND，且均在该字段 LIKE 匹配；多个非空字段之间 AND。`keyword` 仍兼容旧客户端：按空格拆词，每个词需命中编号/名称/厂家型号/制造商/参数/料号/描述/供应商名称任一字段，词之间 AND。修改搜索逻辑时需同步检查 `ComponentRepository.GetAll` 和元件管理页搜索 UI。
 - 元件表单保存时会清除前端关联对象，只提交 `category_id`、`supplier_id`、`component_number`、`supplier_part_number`、`manufacturer` 等字段，避免 GORM 更新关联对象。
-- 编辑元件时，前端可根据当前 `supplier_part_number` 调用 `POST /api/v1/components/parse` 重新解析并回填名称、厂家型号、制造商、参数、封装、描述、数据手册、图片和分类建议；解析结果中空字段不覆盖表单已有值，库存等本地字段保持不变。
+- 编辑元件时，前端可根据当前 `supplier_part_number` 提交 `component_parse` 后台任务重新解析并回填名称、厂家型号、制造商、参数、封装、描述、数据手册、图片和分类建议；解析结果中空字段不覆盖表单已有值，库存等本地字段保持不变。
 
 ## 运行与构建
 
@@ -198,6 +199,7 @@ docker compose down
   - `/api/v1/stock-logs`
   - `/api/v1/stock-logs/:id/revoke`
   - `/api/v1/stats`
+  - `/api/v1/tasks`（POST 入队、GET 分页筛选），`/:id`（GET），`/:id/cancel`、`/:id/retry`（POST）
   - `/api/v1/platforms`
 - 默认数据库类型是 `sqlite`，由 `DB_DRIVER` 覆盖；支持 `sqlite`、`mysql`、`postgres`（`postgresql` 会按 `postgres` 处理）。
 - `DB_DSN` 是数据库连接串：MySQL/PostgreSQL 必填；SQLite 可选，设置后优先于 `DB_PATH`。
@@ -238,3 +240,18 @@ docker compose down
 - 新增前端通用 UI 时，优先放在 `web/src/components/ui/` 并复用现有样式工具。
 - 不要把运行时数据、构建产物或本地数据库提交为源码。常见运行时路径包括 `data/`、`web/dist/` 和生成的二进制文件。
 - 每次修改代码后，根据 `AGENTS.md` 检查并更新本文档。
+
+## 持久化后台任务
+
+- `internal/models/task.go` 定义 `Task` 和跨数据库 `JSONText`（数据库 `text`，API JSON 对象）。`tasks` 表保存类型、原输入、来源页面、可选编辑记录 ID、状态、结果、错误及分类、重试来源 ID 和创建/开始/结束时间；不保存模型配置或密钥。任务不会直接修改元件或预入库。
+- `internal/repository/task_repo.go` 负责分页筛选、按创建时间/ID 领取、条件终态更新和中断恢复。状态为 `queued → running → succeeded/failed/cancelled`；排队也可直接取消。领取和终态更新均有状态条件，取消后成功结果不能覆盖终态。
+- `internal/tasks/service.go` 提供通用队列和首批 `component_parse`、`qrcode_parse` 执行器，复用 `ParserManager`。入队前只验证类型、来源、编码/二维码和必要模型配置，网络抓取和 AI 请求由 worker 执行。取消先写数据库，再取消执行上下文；panic 转失败，worker 继续工作。重试仅允许失败/取消任务，复制输入创建新记录并保存 `retry_of_id`。
+- `TASK_WORKERS` 默认 `2`，`TASK_TIMEOUT_SECONDS` 默认 `120`，从领取开始执行计时；非正整数或无效值使用默认值。抓取仍限 30 秒，模型请求仍限 90 秒，二者同时接收任务上下文以终止实际 HTTP 请求。
+- `cmd/server/main.go` 启动 worker 前把遗留 `running` 标记失败（`interrupted`，服务中断），保留 `queued`。SIGINT/SIGTERM 时停止领取并取消执行，记录运行任务中断，再关闭 HTTP 服务。仅支持单服务实例；不引入 Redis，不自动重试，不删除或清理历史。
+- 所有 `/api/v1/tasks` 接口使用现有鉴权。POST 请求：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`（可选 `record_id`）；二维码任务使用 `type:"qrcode_parse"` 与 `input.qrcode_data`。来源可省略或为 `components`/`pre-stocks`，编辑记录 ID 需有有效来源。POST 入队与重试返回 `202 {data:Task}`；GET 列表支持 `status`、`type`、`page`、`page_size`（1–100），返回 `{data,pagination}`；非法状态操作返回 409。结果固定包含 `component`，扫码另有 `quantity`、`qrcode_info`；详情含原输入和可展示错误。
+- 旧 `/components/parse` 和 `/components/parse-qrcode` 继续同步返回原有结构，复用相同解析器并传递 HTTP 请求上下文。
+- `web/src/context/TaskContext.tsx` 在受保护布局内维护共享任务状态，每 2 秒轮询跟踪中的任务。会话存储 `hamster-pending-tasks` 保存未完成 ID；刷新时分页恢复数据库排队/运行任务，并查询原跟踪 ID，历史完成任务不重复通知。退出登录卸载 Provider，终止轮询。
+- `/tasks`（`pages/Tasks.tsx`）是任务中心，提供分页、状态/类型筛选、输入/结果/错误详情、取消、重试、应用结果。侧边栏有入口。SPA fallback 直接返回嵌入的 `web/dist/index.html`，刷新任务/恢复链接不会丢失路径和查询参数；构建产物不提交。
+- `hooks/useParseTask.ts` 隔离表单会话，`utils/parseResult.ts` 按提交快照逐字段合并非空解析值；手动修改保留。关闭、保存、重新打开或复制表单使旧任务失去自动回填资格，任务仍继续。`components/ParseTaskStatus.tsx` 显示任务编号和状态，解析不阻塞编辑/关闭/保存，仅禁用同一会话内重复提交。
+- `hooks/useTaskApplication.ts` 消费业务页 `?applyTask=<id>` 恢复链接；先取任务，再重新读取编辑记录后回填。目标删除或预入库已确认时询问是否用于新增表单。只恢复解析结果，不恢复完整未保存草稿；编号、分类、供应商、数量沿用原映射，业务保存需用户确认。
+- 测试：`go test ./...`，`go test -race ./internal/tasks ./internal/repository`；任务测试使用本地解析器/临时数据库，解析器测试使用本地 HTTP 与模型响应，无需访问真实商品页。修改 Go 后先执行 `go fix ./...`、`go fmt ./...` 再测试；前端执行 `npm run lint`、`npm run build`（在 `web/` 下）。

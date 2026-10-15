@@ -50,3 +50,21 @@ func TestDatabaseDisplay(t *testing.T) {
 		t.Fatalf("external DatabaseDisplay() = %q, want external", got)
 	}
 }
+
+func TestTaskConfigurationDefaultsAndOverrides(t *testing.T) {
+	for _, test := range []struct {
+		workers, timeout         string
+		wantWorkers, wantTimeout int
+	}{
+		{"", "", 2, 120}, {"3", "45", 3, 45}, {"0", "-1", 2, 120}, {"bad", "bad", 2, 120},
+	} {
+		t.Setenv("TASK_WORKERS", test.workers)
+		t.Setenv("TASK_TIMEOUT_SECONDS", test.timeout)
+		if got := positiveEnv("TASK_WORKERS", 2); got != test.wantWorkers {
+			t.Fatalf("workers=%d", got)
+		}
+		if got := positiveEnv("TASK_TIMEOUT_SECONDS", 120); got != test.wantTimeout {
+			t.Fatalf("timeout=%d", got)
+		}
+	}
+}
