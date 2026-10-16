@@ -109,12 +109,10 @@ func TestIdleWorkersWaitAndWakeOnSubmit(t *testing.T) {
 		}
 	}
 	start(t, s)
-	for range 2 {
-		select {
-		case <-empty:
-		case <-time.After(time.Second):
-			t.Fatal("worker did not check queue on startup")
-		}
+	select {
+	case <-empty:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not check queue on startup")
 	}
 	select {
 	case <-empty:

@@ -61,6 +61,8 @@ type Service struct {
 	pollInterval time.Duration
 	mu           sync.Mutex // 领取/注册上下文与取消串行化，消除取消早于注册的竞态。
 	wake         chan struct{}
+	work         chan *models.Task
+	workFreed    chan struct{}
 	running      map[uint]context.CancelFunc
 	ctx          context.Context
 	stop         context.CancelFunc
@@ -169,6 +171,10 @@ func (s *Service) Start() error {
 		return err
 	}
 	s.ctx, s.stop = context.WithCancel(context.Background())
+	s.work = make(chan *models.Task, s.workers)
+	s.workFreed = make(chan struct{}, s.workers)
+	s.wg.Add(1)
+	go s.dispatcher()
 	for range s.workers {
 		s.wg.Add(1)
 		go s.worker()
@@ -185,40 +191,72 @@ func (s *Service) Stop() {
 }
 func (s *Service) worker() {
 	defer s.wg.Done()
-	for {
-		s.mu.Lock()
+	for t := range s.work {
 		if s.ctx.Err() != nil {
-			s.mu.Unlock()
-			return
-		}
-		// 领取前订阅通知，避免任务恰在空查询与等待之间入队时丢失唤醒。
-		wake := s.wake
-		t, err := s.Repo.Claim()
-		if err == nil {
-			ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
-			s.running[t.ID] = cancel
-			s.mu.Unlock()
-			s.run(ctx, t)
-			cancel()
-			s.mu.Lock()
-			delete(s.running, t.ID)
-			s.mu.Unlock()
+			if err := s.Repo.Requeue(t.ID); err != nil {
+				log.Printf("恢复任务 %d 排队状态失败: %v", t.ID, err)
+			}
 			continue
 		}
+		s.mu.Lock()
+		ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+		s.running[t.ID] = cancel
 		s.mu.Unlock()
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("领取任务失败: %v", err)
-		}
-		// 兜底轮询用于发现通知以外的入队或数据库故障恢复。
+		s.run(ctx, t)
+		cancel()
+		s.mu.Lock()
+		delete(s.running, t.ID)
+		s.mu.Unlock()
+		s.notifyWorkFreed()
+	}
+}
+
+// dispatcher 是唯一负责扫描和领取任务的协程，worker 只负责执行 work channel 中的任务。
+func (s *Service) dispatcher() {
+	defer s.wg.Done()
+	defer close(s.work)
+	for {
+		s.fillWork()
+		s.mu.Lock()
+		wake := s.wake
+		s.mu.Unlock()
 		timer := time.NewTimer(s.pollInterval)
 		select {
 		case <-s.ctx.Done():
 			timer.Stop()
 			return
 		case <-wake:
+		case <-s.workFreed:
 		case <-timer.C:
 		}
 		timer.Stop()
+	}
+}
+
+func (s *Service) fillWork() {
+	for len(s.work) < cap(s.work) {
+		t, err := s.Repo.Claim()
+		if err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Printf("领取任务失败: %v", err)
+			}
+			return
+		}
+		select {
+		case s.work <- t:
+		case <-s.ctx.Done():
+			if requeueErr := s.Repo.Requeue(t.ID); requeueErr != nil {
+				log.Printf("恢复任务 %d 排队状态失败: %v", t.ID, requeueErr)
+			}
+			return
+		}
+	}
+}
+
+func (s *Service) notifyWorkFreed() {
+	select {
+	case s.workFreed <- struct{}{}:
+	default:
 	}
 }
 func (s *Service) invoke(ctx context.Context, t *models.Task) (result *Result, err error) {

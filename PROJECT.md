@@ -256,9 +256,9 @@ docker compose down
 ## 持久化后台任务
 
 - `internal/models/task.go` 定义 `Task` 和跨数据库 `JSONText`（数据库 `text`，API JSON 对象）。`tasks` 表保存类型、原输入、来源页面、可选编辑记录 ID、状态、结果、错误及分类、重试来源 ID 和创建/开始/结束时间；不保存模型配置或密钥。任务不会直接修改元件或预入库。
-- `internal/repository/task_repo.go` 负责分页筛选、按创建时间/ID 领取、条件终态更新和中断恢复。状态为 `queued → running → succeeded/failed/cancelled`；排队也可直接取消。领取和终态更新均有状态条件，取消后成功结果不能覆盖终态。
+- `internal/repository/task_repo.go` 负责分页筛选、按创建时间/ID 领取、条件终态更新、中断恢复和未执行任务回退。状态为 `queued → running → succeeded/failed/cancelled`；排队也可直接取消。领取、回退和终态更新均有状态条件，取消后成功结果不能覆盖终态。
 - `internal/tasks/service.go` 提供通用队列和首批 `component_parse`、`qrcode_parse` 执行器，复用 `ParserManager`。入队前只验证类型、来源、编码/二维码和必要模型配置，网络抓取和 AI 请求由 worker 执行。取消先写数据库，再取消执行上下文；panic 转失败，worker 继续工作。重试仅允许失败/取消任务，复制输入创建新记录并保存 `retry_of_id`。
-- worker 启动或完成任务后立即领取队列；空队列时等待进程内入队广播（包括照片和重试），每个空闲 worker 每 30 秒兜底查询一次，领取失败同样等待通知或兜底重试。领取前订阅广播，避免空查询与等待之间丢失唤醒；停止服务会立即唤醒等待者。
+- 单独的 dispatcher 协程负责领取队列并通过容量等于 `TASK_WORKERS` 的 `work` channel 分发给 worker；入队广播会立即唤醒 dispatcher，数据库每 30 秒兜底扫描一次，领取失败同样等待通知或兜底重试。dispatcher 停止领取后关闭 work；已领取但尚未开始执行的任务恢复为 `queued`，运行中的任务记录为中断。
 - `internal/tasks/images.go` 提供 `image_parse` 任务的 JPEG/PNG 校验与 `IMAGE_DIR/task-inputs` 私有照片存储；任务输入只保存照片引用，不把 Base64 写入数据库。照片任务复用 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，模型需支持图片输入，结果为可人工核对的 `items` 数组。
 - `TASK_WORKERS` 默认 `2`，`TASK_TIMEOUT_SECONDS` 默认 `120`，从领取开始执行计时；非正整数或无效值使用默认值。抓取仍限 30 秒，模型请求仍限 90 秒，二者同时接收任务上下文以终止实际 HTTP 请求。
 - `cmd/server/main.go` 启动 worker 前把遗留 `running` 标记失败（`interrupted`，服务中断），保留 `queued`。SIGINT/SIGTERM 时停止领取并取消执行，记录运行任务中断，再关闭 HTTP 服务。仅支持单服务实例；不引入 Redis，不自动重试，不删除或清理历史。

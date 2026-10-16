@@ -74,6 +74,15 @@ func (r *TaskRepository) Claim() (*models.Task, error) {
 func (r *TaskRepository) Finish(id uint, status string, result models.JSONText, message, code string) error {
 	return r.db.Model(&models.Task{}).Where("id = ? AND status = ?", id, TaskRunning).Updates(map[string]any{"status": status, "result": result, "error": message, "error_code": code, "finished_at": time.Now()}).Error
 }
+
+// Requeue 将已领取但尚未开始执行的任务恢复为排队状态。
+func (r *TaskRepository) Requeue(id uint) error {
+	return r.db.Model(&models.Task{}).Where("id = ? AND status = ?", id, TaskRunning).Updates(map[string]any{
+		"status":      TaskQueued,
+		"started_at":  nil,
+		"finished_at": nil,
+	}).Error
+}
 func (r *TaskRepository) Cancel(id uint) error {
 	result := r.db.Model(&models.Task{}).Where("id = ? AND status IN ?", id, []string{TaskQueued, TaskRunning}).Updates(map[string]any{"status": TaskCancelled, "finished_at": time.Now()})
 	if result.Error != nil {
