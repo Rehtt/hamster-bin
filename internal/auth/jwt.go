@@ -15,8 +15,18 @@ var (
 )
 
 type Claims struct {
-	Username string `json:"username"`
+	Username   string `json:"username"`
+	AuthMethod string `json:"auth_method,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// IssueOAuthToken 签发应用自己的会话引用，不携带提供方令牌。
+func IssueOAuthToken(username, sessionID, secret string, expires time.Time) (string, error) {
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+		Username: username, AuthMethod: "oauth", SessionID: sessionID,
+		RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(time.Now()), ExpiresAt: jwt.NewNumericDate(expires)},
+	}).SignedString([]byte(secret))
 }
 
 // IssueToken 签发 JWT
@@ -45,7 +55,7 @@ func ParseToken(tokenString, secret string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(secret), nil
-	})
+	}, jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, ErrInvalidToken
 	}

@@ -85,3 +85,79 @@ func TestTaskConfigurationDefaultsAndOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestOAuthConfigValidation(t *testing.T) {
+	valid := Config{DBDriver: "sqlite", OAuthEnabled: true, OAuthIssuer: "https://oauth.home.rehtt.com", OAuthClientID: "client", OAuthClientSecret: "secret", OAuthRedirectURL: "https://inventory.example.com/api/v1/auth/oauth/callback", OAuthAuthMethod: "client_secret_basic", JWTSecret: "jwt-secret"}
+	for _, tc := range []struct {
+		name   string
+		change func(*Config)
+		ok     bool
+	}{
+		{"valid", func(*Config) {}, true},
+		{"post", func(c *Config) { c.OAuthAuthMethod = "client_secret_post" }, true},
+		{"local", func(c *Config) {
+			c.OAuthIssuer = "http://127.0.0.1:9000"
+			c.OAuthRedirectURL = "http://localhost:5173/api/v1/auth/oauth/callback"
+		}, true},
+		{"ipv6", func(c *Config) { c.OAuthRedirectURL = "http://[::1]:5173/api/v1/auth/oauth/callback" }, true},
+		{"secret", func(c *Config) { c.OAuthClientSecret = "" }, false},
+		{"client", func(c *Config) { c.OAuthClientID = "" }, false},
+		{"jwt", func(c *Config) { c.JWTSecret = "" }, false},
+		{"method", func(c *Config) { c.OAuthAuthMethod = "auto" }, false},
+		{"issuer_slash", func(c *Config) { c.OAuthIssuer += "/" }, false},
+		{"issuer_query", func(c *Config) { c.OAuthIssuer += "?x=1" }, false},
+		{"issuer_missing", func(c *Config) { c.OAuthIssuer = "" }, false},
+		{"issuer_http", func(c *Config) { c.OAuthIssuer = "http://oauth.example.com" }, false},
+		{"callback_http", func(c *Config) { c.OAuthRedirectURL = "http://inventory.example.com/api/v1/auth/oauth/callback" }, false},
+		{"callback_credentials", func(c *Config) { c.OAuthRedirectURL = "https://u:p@inventory.example.com/api/v1/auth/oauth/callback" }, false},
+		{"callback_fragment", func(c *Config) { c.OAuthRedirectURL += "#x" }, false},
+		{"callback_query", func(c *Config) { c.OAuthRedirectURL += "?code=x" }, false},
+		{"callback_path", func(c *Config) { c.OAuthRedirectURL += "/" }, false},
+		{"callback_missing", func(c *Config) { c.OAuthRedirectURL = "" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.change(&cfg)
+			if err := cfg.Validate(); (err == nil) != tc.ok {
+				t.Fatalf("Validate()=%v, want valid=%v", err, tc.ok)
+			}
+		})
+	}
+	if !valid.IsAuthEnabled() || valid.IsPasswordAuthEnabled() || !valid.CookieSecure() || valid.IsHTTPS() {
+		t.Fatal("OAuth-only/proxy configuration incorrect")
+	}
+	valid.OAuthRedirectURL = "HTTPS://inventory.example.com/api/v1/auth/oauth/callback"
+	if err := valid.Validate(); err != nil || !valid.CookieSecure() {
+		t.Fatal("HTTPS scheme case disabled secure cookie")
+	}
+	valid.OAuthEnabled = false
+	if valid.IsAuthEnabled() || valid.CookieSecure() {
+		t.Fatal("OAuth did not disable")
+	}
+}
+
+func TestOAuthEnvironmentDefaultsAndEnabled(t *testing.T) {
+	for _, key := range []string{"ADMIN_USERNAME", "ADMIN_PASSWORD", "JWT_SECRET", "OAUTH_ENABLED", "OAUTH_ISSUER", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET", "OAUTH_REDIRECT_URL", "OAUTH_AUTH_METHOD"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("DB_DRIVER", "sqlite")
+	cfg := Load()
+	if cfg.OAuthEnabled || cfg.OAuthIssuer != "https://oauth.home.rehtt.com" || cfg.OAuthAuthMethod != "client_secret_basic" {
+		t.Fatal("unexpected OAuth defaults")
+	}
+	t.Setenv("OAUTH_ENABLED", "true")
+	t.Setenv("JWT_SECRET", "secret")
+	t.Setenv("OAUTH_CLIENT_ID", "client")
+	t.Setenv("OAUTH_CLIENT_SECRET", "secret")
+	t.Setenv("OAUTH_REDIRECT_URL", "https://inventory.example.com/api/v1/auth/oauth/callback")
+	if cfg = Load(); !cfg.IsAuthEnabled() || !cfg.OAuthEnabled {
+		t.Fatal("OAuth environment ignored")
+	}
+	t.Setenv("OAUTH_ENABLED", "typo")
+	defer func() {
+		if recover() == nil {
+			t.Error("invalid OAUTH_ENABLED silently disabled auth")
+		}
+	}()
+	Load()
+}

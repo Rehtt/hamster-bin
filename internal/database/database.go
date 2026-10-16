@@ -119,6 +119,8 @@ func autoMigrate() error {
 		&models.PreStock{},
 		&models.StockLog{},
 		&models.Task{},
+		&models.OAuthIdentity{},
+		&models.OAuthSession{},
 	)
 }
 

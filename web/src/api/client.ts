@@ -14,6 +14,7 @@ client.interceptors.response.use(
 
     if (
       status === 401 &&
+      !url.includes('/auth/config') &&
       !url.includes('/auth/me') &&
       !url.includes('/auth/login') &&
       window.location.pathname !== '/login'

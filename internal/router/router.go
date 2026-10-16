@@ -1,16 +1,22 @@
 package router
 
 import (
+	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
+	"runtime/debug"
 	"strings"
+	"time"
 
 	hamsterbin "github.com/Rehtt/hamster-bin"
+	"github.com/Rehtt/hamster-bin/internal/auth"
 	"github.com/Rehtt/hamster-bin/internal/config"
 	"github.com/Rehtt/hamster-bin/internal/handlers"
 	"github.com/Rehtt/hamster-bin/internal/mcp"
 	"github.com/Rehtt/hamster-bin/internal/middleware"
 	"github.com/Rehtt/hamster-bin/internal/parser"
+	"github.com/Rehtt/hamster-bin/internal/repository"
 	"github.com/Rehtt/hamster-bin/internal/tasks"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +33,14 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 	// 设置为发布模式（生产环境）
 	// gin.SetMode(gin.ReleaseMode)
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.LoggerWithFormatter(func(p gin.LogFormatterParams) string {
+		// 仅记录固定路径，不记录回调中的授权码、state 或请求头。
+		return fmt.Sprintf("%s | %d | %s | %s %s\n", p.TimeStamp.Format(time.RFC3339), p.StatusCode, p.Latency, p.Method, strings.SplitN(p.Path, "?", 2)[0])
+	}), gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, _ any) {
+		log.Printf("请求处理异常: %s %s\n%s", c.Request.Method, c.FullPath(), debug.Stack())
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
 
 	// CORS 中间件
 	r.Use(corsMiddleware())
@@ -43,14 +56,21 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 	parserHandler := handlers.NewParserHandler(parserManager)
 	taskHandler := handlers.NewTaskHandler(taskService)
 	batchHandler := handlers.NewBatchHandler(db)
-	authHandler := handlers.NewAuthHandler(cfg)
-	authMiddleware := middleware.AuthMiddleware(cfg)
+	authService, err := auth.NewService(cfg, repository.NewOAuthRepository(db))
+	if err != nil {
+		panic("认证会话初始化失败")
+	}
+	authHandler := handlers.NewAuthHandler(cfg, authService)
+	authMiddleware := middleware.AuthMiddleware(cfg, authService)
 
 	// API 路由组
 	v1 := r.Group("/api/v1")
 	{
 		authGroup := v1.Group("/auth")
 		{
+			authGroup.GET("/config", authHandler.Config)
+			authGroup.GET("/oauth/login", authHandler.OAuthLogin)
+			authGroup.GET("/oauth/callback", authHandler.OAuthCallback)
 			authGroup.POST("/login", authHandler.Login)
 			authGroup.POST("/logout", authHandler.Logout)
 			authGroup.GET("/me", authHandler.Me)

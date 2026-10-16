@@ -31,7 +31,7 @@ func testAuthConfig(enabled bool) *config.Config {
 }
 
 func TestAuthHandlerMeAuthDisabled(t *testing.T) {
-	handler := NewAuthHandler(testAuthConfig(false))
+	handler := newTestAuthHandler(t, testAuthConfig(false))
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
@@ -52,7 +52,7 @@ func TestAuthHandlerMeAuthDisabled(t *testing.T) {
 }
 
 func TestAuthHandlerLoginSuccess(t *testing.T) {
-	handler := NewAuthHandler(testAuthConfig(true))
+	handler := newTestAuthHandler(t, testAuthConfig(true))
 	body, _ := json.Marshal(map[string]string{
 		"username": "admin",
 		"password": "secret",
@@ -85,7 +85,7 @@ func TestAuthHandlerLoginSuccess(t *testing.T) {
 }
 
 func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
-	handler := NewAuthHandler(testAuthConfig(true))
+	handler := newTestAuthHandler(t, testAuthConfig(true))
 	body, _ := json.Marshal(map[string]string{
 		"username": "admin",
 		"password": "wrong",
@@ -104,7 +104,7 @@ func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 
 func TestAuthHandlerMeAuthenticated(t *testing.T) {
 	cfg := testAuthConfig(true)
-	handler := NewAuthHandler(cfg)
+	handler := newTestAuthHandler(t, cfg)
 
 	token, err := auth.IssueToken("admin", cfg.JWTSecret, cfg.JWTExpireHours)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestAuthHandlerMeAuthenticated(t *testing.T) {
 }
 
 func TestAuthHandlerLogoutClearsCookie(t *testing.T) {
-	handler := NewAuthHandler(testAuthConfig(true))
+	handler := newTestAuthHandler(t, testAuthConfig(true))
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
@@ -152,4 +152,13 @@ func TestAuthHandlerLogoutClearsCookie(t *testing.T) {
 			t.Fatalf("expected cookie MaxAge = -1, got %d", cookie.MaxAge)
 		}
 	}
+}
+
+func newTestAuthHandler(t *testing.T, cfg *config.Config) *AuthHandler {
+	t.Helper()
+	service, err := auth.NewService(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewAuthHandler(cfg, service)
 }

@@ -29,7 +29,7 @@ func TestAuthMiddlewareDisabled(t *testing.T) {
 	cfg.AdminPassword = ""
 
 	r := gin.New()
-	r.GET("/protected", AuthMiddleware(cfg), func(c *gin.Context) {
+	r.GET("/protected", testMiddleware(t, cfg), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
@@ -45,7 +45,7 @@ func TestAuthMiddlewareDisabled(t *testing.T) {
 func TestAuthMiddlewareMissingCookie(t *testing.T) {
 	cfg := testAuthConfig()
 	r := gin.New()
-	r.GET("/protected", AuthMiddleware(cfg), func(c *gin.Context) {
+	r.GET("/protected", testMiddleware(t, cfg), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
@@ -66,7 +66,7 @@ func TestAuthMiddlewareValidCookie(t *testing.T) {
 	}
 
 	r := gin.New()
-	r.GET("/protected", AuthMiddleware(cfg), func(c *gin.Context) {
+	r.GET("/protected", testMiddleware(t, cfg), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
@@ -83,7 +83,7 @@ func TestAuthMiddlewareValidCookie(t *testing.T) {
 func TestAuthMiddlewareInvalidCookie(t *testing.T) {
 	cfg := testAuthConfig()
 	r := gin.New()
-	r.GET("/protected", AuthMiddleware(cfg), func(c *gin.Context) {
+	r.GET("/protected", testMiddleware(t, cfg), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
@@ -95,4 +95,13 @@ func TestAuthMiddlewareInvalidCookie(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
+}
+
+func testMiddleware(t *testing.T, cfg *config.Config) gin.HandlerFunc {
+	t.Helper()
+	service, err := auth.NewService(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return AuthMiddleware(cfg, service)
 }

@@ -23,7 +23,7 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 - 持久化后台解析：元件与预入库的编码、二维码和照片 AI 解析提交后立即返回任务编号，可继续编辑或关闭表单。照片支持 JPEG/PNG 拍摄或选图、识别多条元件，核对后在完整表单中逐条切换编辑并一次批量保存（未知数量需补齐，0 合法）；任务中心支持结果恢复、失败重试和取消，跨页面显示完成提示；结果需确认保存后才写入业务数据。
 - 可选 AI 辅助解析：配置 OpenAI-compatible API 后，可辅助解析元件参数。
 - 图片与资料：支持元件图片上传、拍照 AI 解析、Datasheet 链接和描述信息。
-- 可选登录鉴权：通过环境变量启用单管理员登录，使用 HttpOnly Cookie 保存 JWT。
+- 可选登录鉴权：支持管理员密码和统一 OAuth / OIDC 登录，可单独启用或并存，使用 HttpOnly Cookie 保存应用会话。
 - 可选远程 MCP：外部 AI 客户端通过独立 Bearer Token 查询和管理元件、预入库、入出库及统计。
 - 单文件部署：生产构建可将 React 前端嵌入 Go 二进制，便于在内网或个人服务器运行。
 
@@ -165,7 +165,7 @@ docker compose logs -f
 docker compose down
 ```
 
-启用鉴权、HTTPS 或 LLM 辅助解析时，在 `.env` 中设置对应变量（`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`；`SSL_CERT` 与 `SSL_KEY`；`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`），详见下方「配置说明」。
+启用鉴权、HTTPS 或 LLM 辅助解析时，在 `.env` 中设置对应变量（`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`，或下文 OAuth 配置；`SSL_CERT` 与 `SSL_KEY`；`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`），详见下方「配置说明」。
 
 使用 GHCR 预构建镜像时，在 `docker-compose.yml` 中注释掉 `build` 段、取消 `image: ghcr.io/rehtt/hamster-bin:latest` 注释，然后执行 `docker compose up -d`（无需 `--build`）。
 
@@ -185,8 +185,14 @@ docker compose down
 | `SSL_KEY` | 空 | HTTPS 私钥路径；需与 `SSL_CERT` 同时设置 |
 | `ADMIN_USERNAME` | 空 | 管理员用户名；与 `ADMIN_PASSWORD` 同时设置时启用登录鉴权 |
 | `ADMIN_PASSWORD` | 空 | 管理员密码 |
-| `JWT_SECRET` | 空 | JWT 签名密钥；启用鉴权时必填 |
-| `JWT_EXPIRE_HOURS` | `168` | JWT 有效期，单位为小时 |
+| `JWT_SECRET` | 空 | JWT 签名及 OAuth 令牌加密的根密钥；启用鉴权时必填 |
+| `JWT_EXPIRE_HOURS` | `168` | 本地登录有效期（小时）；OAuth 会话额外受授权 30 天上限限制 |
+| `OAUTH_ENABLED` | `false` | 启用统一登录；可与管理员密码并存 |
+| `OAUTH_ISSUER` | `https://oauth.home.rehtt.com` | OIDC Issuer，必须与发现文档精确一致，末尾不带 `/` |
+| `OAUTH_CLIENT_ID` | 空 | OAuth 应用 ID，启用时必填 |
+| `OAUTH_CLIENT_SECRET` | 空 | OAuth 客户端密钥，启用时必填，仅服务端使用 |
+| `OAUTH_REDIRECT_URL` | 空 | 完整回调地址，路径固定为 `/api/v1/auth/oauth/callback`，启用时必填 |
+| `OAUTH_AUTH_METHOD` | `client_secret_basic` | 客户端认证方式，可选 `client_secret_post`，须与应用注册一致 |
 | `MCP_TOKEN` | 空 | 远程 MCP 的部署级 Token；空值关闭 `/mcp`，配置后持有者拥有全部 MCP 工具权限 |
 | `MCP_ALLOWED_ORIGINS` | 空 | 逗号分隔的完整 Origin，例如 `https://client.example,http://localhost:3000`；默认仅同源或无 Origin 请求 |
 | `TASK_WORKERS` | `2` | 后台任务并发数，正整数 |
@@ -220,7 +226,30 @@ export JWT_SECRET='random-32+-char-secret'
 ./hamster-bin
 ```
 
-启用 HTTPS：
+### 统一 OAuth / OIDC 登录
+
+在统一登录管理端创建机密客户端应用，精确登记 `https://inventory.example.com/api/v1/auth/oauth/callback`（替换为本站地址），允许 `openid profile email offline_access`，并为用户分配本应用。本站配置示例：
+
+```bash
+export OAUTH_ENABLED=true
+export OAUTH_ISSUER='https://oauth.home.rehtt.com'
+export OAUTH_CLIENT_ID='replace-with-client-id'
+# 安全设置并导出 OAUTH_CLIENT_SECRET，使用管理员交付的真实密钥。
+export OAUTH_REDIRECT_URL='https://inventory.example.com/api/v1/auth/oauth/callback'
+export OAUTH_AUTH_METHOD=client_secret_basic
+export JWT_SECRET='replace-with-a-long-random-secret'
+./hamster-bin
+```
+
+登录页会显示“使用统一账号登录”。同时设置管理员用户名和密码会保留密码登录；只启用 OAuth 时无需配置管理员凭据。已分配的统一登录用户共享同一份库存和全部操作权限，没有角色或个人库存隔离。首次授权需要确认离线访问；未允许 `offline_access` 或没有返回刷新令牌时，本站不会建立登录会话。
+
+OAuth 身份按 `(iss, sub)` 关联，用户名或邮箱变化不会创建重复身份，也不会按未验证邮箱合并账号。令牌仅在服务端加密持久化，浏览器只保存应用自己的 HttpOnly 会话 Cookie。应用重启后会话可继续使用，但正在进行的授权或刷新需要重新登录。默认七天有效，最长不超过本次授权的 30 天，刷新不会延长本地会话期限；修改 `JWT_SECRET` 会使已有登录失效，也会使已保存的令牌无法解密。
+
+每次受保护请求都会通过 UserInfo 检查授权，访问令牌即将到期时自动串行刷新。停用用户、移除分配或撤销授权后，下次请求会退出登录；统一登录服务不可用或检查失败时同样拒绝访问并清除本地会话。密码登录和 MCP 不依赖 OAuth 在线检查。退出本站会清除本地会话并尝试撤销该次授权，不会退出统一登录站点或其他应用。
+
+生产使用 HTTPS；反向代理终止 HTTPS 时，`OAUTH_REDIRECT_URL` 仍填写外部 HTTPS 地址，以便正确设置 Secure Cookie。应用与前端需通过同一站点访问。开发时可在管理端登记 `http://127.0.0.1:5173/api/v1/auth/oauth/callback`，浏览器访问 `http://127.0.0.1:5173`，由现有 Vite `/api` 代理转发到后端；使用嵌入式前端时改用后端实际地址。回调协议、域名、端口、路径必须与登记值完全一致，不支持附加查询参数。反向代理日志也应过滤回调查询、Cookie 和认证头。
+
+### HTTPS
 
 ```bash
 export SSL_CERT=/path/to/fullchain.pem
@@ -228,7 +257,7 @@ export SSL_KEY=/path/to/privkey.pem
 ./hamster-bin
 ```
 
-启用 AI 辅助解析：
+### AI 辅助解析
 
 ```bash
 export LLM_BASE_URL='https://api.openai.com/v1'
@@ -310,6 +339,7 @@ cd web
 npm run dev      # 开发服务
 npm run build    # 类型检查并构建
 npm run lint     # ESLint 检查
+npm run test:auth # 登录入口、路由保护与错误展示渲染测试
 npm run preview  # 预览构建结果
 ```
 
@@ -323,7 +353,7 @@ go test . ./cmd/... ./internal/...
 
 后端 API 前缀为 `/api/v1`。主要资源包括：
 
-- `/api/v1/auth/*`：登录、退出登录和当前用户状态。
+- `/api/v1/auth/*`：登录方式配置（`GET /config`）、密码登录、OAuth 发起/回调（`GET /oauth/login`、`GET /oauth/callback`）、退出登录和当前用户状态（含 `auth_method`）。
 - `/api/v1/categories`：分类管理。
 - `/api/v1/suppliers`：供应商管理。
 - `/api/v1/components`：元件列表、创建、更新、删除、导出和库存操作。

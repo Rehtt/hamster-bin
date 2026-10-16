@@ -1,8 +1,9 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import AuthError from './AuthError';
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { authEnabled, isAuthenticated, loading } = useAuth();
+  const { authEnabled, isAuthenticated, loading, error } = useAuth();
 
   if (loading) {
     return (
@@ -11,6 +12,8 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       </div>
     );
   }
+
+  if (error) return <AuthError />;
 
   if (authEnabled && !isAuthenticated) {
     return <Navigate to="/login" replace />;
