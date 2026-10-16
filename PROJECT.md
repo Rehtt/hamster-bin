@@ -184,8 +184,9 @@ docker compose down
 - `MCP_ALLOWED_ORIGINS` 为逗号分隔的完整 Origin 列表，空值默认仅同源或无 Origin；不支持通配符或路径。`/mcp` 跳过 REST 全局 CORS，先做独立 Origin 校验再处理预检，非法 Origin 返回 403，缺失/错误 Token 返回 401。代理头不参与同源判断；反向代理终止 HTTPS 后的外部浏览器 Origin 需配置白名单，回环上游 Host 应使用本机地址以兼容 SDK 的 DNS 重绑定保护。
 - MCP 工具共 17 个：`list_components`、`get_component`、`create_component`、`update_component`、`change_stock`；`list_pre_stocks`、`get_pre_stock`、`create_pre_stock`、`update_pre_stock`、`confirm_pre_stock`；`list_categories`、`create_category`、`list_suppliers`、`create_supplier`；`list_stock_logs`、`get_component_stock_logs`、`get_stats`。不开放删除、撤销、批量、平台解析和后台任务。
 - MCP 分页默认 page=1、page_size=20，上限 100；单元件流水 limit 默认 50，上限 100。预入库状态默认 pending（可选 confirmed/all），统计默认 month（可选 quarter/all）。查询复用 REST 的搜索、分类和排序规则。
+- MCP 成功响应保持 `{data, pagination?}` 结构；`result.Data` 保留 `any`，必须带中文 `jsonschema` 描述，使 SDK 输出仅含 `description` 的对象 Schema，避免生成 `"data": true` 导致 Hermes 添加服务时校验失败。不要通过限定 data 类型缩小对象、数组等返回值范围；`additionalProperties: false` 仍是合法约束。
 - MCP 创建必填名称、分类 ID 和非负数量（元件 stock_quantity、预入库 expected_quantity）；供应商使用已有 ID，同名创建供应商返回已有记录。总价为整数分，单价为微元；数量为零时不允许正数总价。元件编辑不接受库存/参考单价；局部编辑省略字段保持原值、空字符串清除文本、supplier_id=0 解除关联。`change_stock.amount` 正入负出且不得为零，入库总价非负，出库成本自动计算，复用 `ApplyStockChange`；预入库确认复用 `Confirm`。
-- MCP 集成测试位于 `internal/mcp/mcp_test.go`，通过官方 SDK 客户端覆盖发现、新旧版本握手、17 个工具、Schema/文本兼容、认证/Origin、写入与失败回滚。验证使用 `go fix ./...` → `go fmt ./...` → `go test . ./cmd/... ./internal/...` → `make build`。
+- MCP 集成测试位于 `internal/mcp/mcp_test.go`，通过官方 SDK 客户端覆盖发现、新旧版本握手、17 个工具、Schema/文本兼容、认证/Origin、写入与失败回滚。`TestSDKWorkflow` 递归检查全部工具的输入和输出 Schema，要求 `properties` 下各字段为对象，并确认 data Schema 仅含描述；复用业务调用覆盖对象、数组、文本回退和错误结果，分页由 `TestLegacyHandshakeAndPagination` 覆盖。验证使用 `go fix ./...` → `go fmt ./...` → `go test . ./cmd/... ./internal/...` → `make build`。
 - 后端 API 基础路径是 `/api/v1`，前端 Axios 客户端也使用该路径。修改 API 前缀时必须同步修改前后端。
 - 主要 API 分组：
   - `/api/v1/auth/login`（POST，公开）

@@ -15,7 +15,8 @@ import (
 )
 
 type result struct {
-	Data       any         `json:"data"`
+	// 描述使 SDK 输出对象形式的 Schema，避免布尔 Schema 导致 Hermes 发现工具失败，同时保留任意返回值类型。
+	Data       any         `json:"data" jsonschema:"工具返回的数据，结构取决于具体工具"`
 	Pagination *pagination `json:"pagination,omitempty"`
 }
 type pagination struct {

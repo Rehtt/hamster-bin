@@ -119,6 +119,32 @@ func decode[T any](t *testing.T, b []byte) T {
 	return v
 }
 
+// Hermes 要求 properties 中的字段 Schema 为对象；additionalProperties: false 等布尔值仍合法。
+func checkPropertySchemas(t *testing.T, path string, node any) {
+	t.Helper()
+	switch node := node.(type) {
+	case map[string]any:
+		if properties, exists := node["properties"]; exists {
+			fields, ok := properties.(map[string]any)
+			if !ok {
+				t.Fatalf("%s.properties must be an object: %v", path, properties)
+			}
+			for name, field := range fields {
+				if _, ok := field.(map[string]any); !ok {
+					t.Fatalf("%s.properties.%s must be an object schema: %v", path, name, field)
+				}
+			}
+		}
+		for name, child := range node {
+			checkPropertySchemas(t, path+"."+name, child)
+		}
+	case []any:
+		for i, child := range node {
+			checkPropertySchemas(t, fmt.Sprintf("%s[%d]", path, i), child)
+		}
+	}
+}
+
 func TestSDKWorkflow(t *testing.T) {
 	_, server := setup(t, true)
 	s := connect(t, server, "")
@@ -141,6 +167,20 @@ func TestSDKWorkflow(t *testing.T) {
 		schema := decode[map[string]any](t, mustJSON(t, tool.InputSchema))
 		if schema["type"] != "object" || schema["additionalProperties"] != false {
 			t.Fatalf("bad schema %s: %v", tool.Name, schema)
+		}
+		checkPropertySchemas(t, tool.Name+".inputSchema", schema)
+		output := decode[map[string]any](t, mustJSON(t, tool.OutputSchema))
+		if output["type"] != "object" || output["additionalProperties"] != false {
+			t.Fatalf("bad output schema %s: %v", tool.Name, output)
+		}
+		checkPropertySchemas(t, tool.Name+".outputSchema", output)
+		properties, ok := output["properties"].(map[string]any)
+		if !ok || len(properties) != 2 || properties["data"] == nil || properties["pagination"] == nil {
+			t.Fatalf("bad output envelope %s: %v", tool.Name, output)
+		}
+		dataSchema := properties["data"].(map[string]any)
+		if len(dataSchema) != 1 || dataSchema["description"] != "工具返回的数据，结构取决于具体工具" {
+			t.Fatalf("data schema must describe unrestricted values %s: %v", tool.Name, dataSchema)
 		}
 		if tool.Name == "create_component" {
 			required := fmt.Sprint(schema["required"])
