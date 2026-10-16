@@ -7,6 +7,7 @@ import (
 	"github.com/Rehtt/hamster-bin/internal/models"
 	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -162,7 +163,7 @@ func (r *PreStockRepository) Confirm(id uint) (*models.PreStock, error) {
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var preStock models.PreStock
-		if err := tx.First(&preStock, id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&preStock, id).Error; err != nil {
 			return err
 		}
 		if preStock.Status != PreStockStatusPending {

@@ -8,6 +8,7 @@ import (
 	hamsterbin "github.com/Rehtt/hamster-bin"
 	"github.com/Rehtt/hamster-bin/internal/config"
 	"github.com/Rehtt/hamster-bin/internal/handlers"
+	"github.com/Rehtt/hamster-bin/internal/mcp"
 	"github.com/Rehtt/hamster-bin/internal/middleware"
 	"github.com/Rehtt/hamster-bin/internal/parser"
 	"github.com/Rehtt/hamster-bin/internal/tasks"
@@ -30,6 +31,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 
 	// CORS 中间件
 	r.Use(corsMiddleware())
+	r.Any("/mcp", gin.WrapH(mcp.NewHandler(db, cfg)))
 
 	// 初始化 Handlers
 	categoryHandler := handlers.NewCategoryHandler(db)
@@ -162,6 +164,10 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 // corsMiddleware CORS 跨域中间件
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/mcp" {
+			c.Next()
+			return
+		}
 		origin := c.GetHeader("Origin")
 		if origin != "" {
 			if _, ok := allowedOrigins[origin]; ok {

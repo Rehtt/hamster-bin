@@ -2,16 +2,19 @@ package repository
 
 import (
 	"errors"
+	"math"
 	"strings"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
 	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
 	ErrInsufficientStock   = errors.New("库存不足")
 	ErrBatchStockOutFailed = errors.New("批量出库失败")
+	ErrStockValueOverflow  = errors.New("库存数量或金额过大")
 )
 
 type ComponentRepository struct {
@@ -193,12 +196,28 @@ type StockChangeParams struct {
 func applyStockChangeTx(tx *gorm.DB, params StockChangeParams) (*models.Component, error) {
 	var updated models.Component
 	var component models.Component
-	if err := tx.First(&component, params.ComponentID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&component, params.ComponentID).Error; err != nil {
 		return nil, err
 	}
 
-	if component.StockQuantity+params.Amount < 0 {
+	if params.Amount < 0 && (params.Amount == math.MinInt || component.StockQuantity < -params.Amount) {
 		return nil, ErrInsufficientStock
+	}
+	if params.Amount > 0 && component.StockQuantity > math.MaxInt-params.Amount {
+		return nil, ErrStockValueOverflow
+	}
+	if params.Amount > 0 && params.TotalPriceCents > 0 {
+		if params.TotalPriceCents > (math.MaxInt64-int64(params.Amount)/2)/price.MicroPerCent {
+			return nil, ErrStockValueOverflow
+		}
+		if component.StockQuantity > 0 && component.UnitPriceMicro > 0 &&
+			int64(component.StockQuantity) > (math.MaxInt64-params.TotalPriceCents*price.MicroPerCent)/component.UnitPriceMicro {
+			return nil, ErrStockValueOverflow
+		}
+	}
+	if params.Amount < 0 && params.UnitPriceMicro == 0 && component.UnitPriceMicro > 0 &&
+		component.UnitPriceMicro > (math.MaxInt64-price.MicroPerCent/2)/int64(-params.Amount) {
+		return nil, ErrStockValueOverflow
 	}
 
 	if err := tx.Model(&models.Component{}).Where("id = ?", params.ComponentID).

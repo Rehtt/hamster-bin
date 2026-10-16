@@ -24,6 +24,7 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 - 可选 AI 辅助解析：配置 OpenAI-compatible API 后，可辅助解析元件参数。
 - 图片与资料：支持元件图片上传、拍照 AI 解析、Datasheet 链接和描述信息。
 - 可选登录鉴权：通过环境变量启用单管理员登录，使用 HttpOnly Cookie 保存 JWT。
+- 可选远程 MCP：外部 AI 客户端通过独立 Bearer Token 查询和管理元件、预入库、入出库及统计。
 - 单文件部署：生产构建可将 React 前端嵌入 Go 二进制，便于在内网或个人服务器运行。
 
 ## 项目状态
@@ -186,6 +187,8 @@ docker compose down
 | `ADMIN_PASSWORD` | 空 | 管理员密码 |
 | `JWT_SECRET` | 空 | JWT 签名密钥；启用鉴权时必填 |
 | `JWT_EXPIRE_HOURS` | `168` | JWT 有效期，单位为小时 |
+| `MCP_TOKEN` | 空 | 远程 MCP 的部署级 Token；空值关闭 `/mcp`，配置后持有者拥有全部 MCP 工具权限 |
+| `MCP_ALLOWED_ORIGINS` | 空 | 逗号分隔的完整 Origin，例如 `https://client.example,http://localhost:3000`；默认仅同源或无 Origin 请求 |
 | `TASK_WORKERS` | `2` | 后台任务并发数，正整数 |
 | `TASK_TIMEOUT_SECONDS` | `120` | 单个任务从开始执行计时的超时秒数，正整数 |
 | `LLM_BASE_URL` | 空 | OpenAI-compatible API base，例如 `https://api.openai.com/v1` |
@@ -233,6 +236,62 @@ export LLM_API_KEY='sk-...'
 export LLM_MODEL='gpt-4o-mini'
 ./hamster-bin
 ```
+
+## 远程 MCP
+
+设置 `MCP_TOKEN` 并启动或重启服务：
+
+```bash
+export MCP_TOKEN='replace-with-a-long-random-secret'
+./hamster-bin
+```
+
+在支持自定义认证头的 MCP 客户端中填写：
+
+```json
+{
+  "mcpServers": {
+    "hamster-bin": {
+      "type": "http",
+      "url": "https://inventory.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-a-long-random-secret"
+      }
+    }
+  }
+}
+```
+
+本地地址为 `http://localhost:8080/mcp`；客户端配置格式可能不同，连接类型选择 Streamable HTTP，填写相同 URL 和认证头即可。服务使用[官方 Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)，以无状态 HTTP 返回 JSON，由 SDK 处理发现、握手和协议版本协商。
+
+| 能力 | 工具 |
+| :--- | :--- |
+| 元件 | `list_components`、`get_component`、`create_component`、`update_component` |
+| 入出库 | `change_stock` |
+| 预入库 | `list_pre_stocks`、`get_pre_stock`、`create_pre_stock`、`update_pre_stock`、`confirm_pre_stock` |
+| 分类与供应商 | `list_categories`、`create_category`、`list_suppliers`、`create_supplier` |
+| 流水与统计 | `list_stock_logs`、`get_component_stock_logs`、`get_stats` |
+
+工具参数包含中文说明和读写标记，返回 `structuredContent` 及相同 JSON 的文本内容；结果包含 `data`，分页结果还包含 `pagination`。业务失败通过 MCP `isError` 返回。删除、撤销、批量操作、平台解析和后台任务不对 MCP 开放。
+
+调用顺序示例（以下为 `tools/call` 的参数）：
+
+```json
+{"name":"create_category","arguments":{"name":"电阻"}}
+{"name":"create_supplier","arguments":{"name":"嘉立创"}}
+{"name":"create_component","arguments":{"name":"10k 贴片电阻","category_id":1,"supplier_id":1,"stock_quantity":100,"total_price_cents":250,"location":"A1"}}
+{"name":"list_components","arguments":{"name":"电阻","value":"10k","page":1,"page_size":20}}
+{"name":"update_component","arguments":{"id":1,"location":"B2"}}
+{"name":"change_stock","arguments":{"id":1,"amount":-5,"reason":"项目领用"}}
+```
+
+实际使用前两次调用返回的分类、供应商 ID，以及创建元件返回的 ID。创建元件必须传 `name`、`category_id`、非负 `stock_quantity`；创建预入库改传非负 `expected_quantity`。采购总价 `total_price_cents` 使用整数分，返回单价 `unit_price_micro` 使用微元（1 元 = 1,000,000 微元）；数量为零时不得填写正数总价。
+
+编辑仅更新传入字段，省略字段保持原值；空字符串清除文本，`supplier_id: 0` 解除供应商关联。元件编辑不接受库存数量或参考单价。库存通过 `change_stock` 的 `amount` 修改，正数入库、负数出库，禁止为零；入库可填写非负总价，出库成本自动计算。预入库确认会创建正式元件及现有规则要求的流水，已确认记录不可再次确认或编辑。
+
+分页默认第 1 页、每页 20 条，每页上限 100；单元件流水默认最近 50 条，上限 100。元件搜索与 REST 使用相同的分字段、空格分词和排序规则；预入库默认 `pending`（可选 `confirmed`、`all`），统计默认 `month`（可选 `quarter`、`all`）。
+
+MCP Token 与 Web 登录 Cookie 独立；Web 登录不能代替 MCP Token，MCP Token 也不能用于 REST 登录。Token 持有者拥有上述全部工具权限，通过修改环境变量并重启服务轮换。公网连接使用 HTTPS。浏览器跨源连接时，设置 `MCP_ALLOWED_ORIGINS` 为客户端的完整 Origin（协议、主机和可选端口，不带路径、不支持通配符）；MCP 独立校验 Origin，默认拒绝其他跨源请求。无 Origin 的非浏览器客户端无需配置白名单。反向代理终止 HTTPS 时，可将外部浏览器 Origin 加入白名单；代理到本机回环地址时，应将上游 Host 设置为本机地址，以兼容 SDK 的 DNS 重绑定保护。
 
 ## 常用命令
 

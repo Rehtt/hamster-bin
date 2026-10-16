@@ -2,6 +2,23 @@ package config
 
 import "testing"
 
+func TestMCPConfiguration(t *testing.T) {
+	t.Setenv("DB_DRIVER", "sqlite")
+	t.Setenv("ADMIN_USERNAME", "")
+	t.Setenv("ADMIN_PASSWORD", "")
+	t.Setenv("MCP_TOKEN", "")
+	t.Setenv("MCP_ALLOWED_ORIGINS", "")
+	if cfg := Load(); cfg.MCPToken != "" || len(cfg.MCPAllowedOrigins) != 0 {
+		t.Fatalf("MCP should default to disabled: %+v", cfg.MCPAllowedOrigins)
+	}
+	t.Setenv("MCP_TOKEN", "secret")
+	t.Setenv("MCP_ALLOWED_ORIGINS", " https://client.example, , http://localhost:3000 ")
+	cfg := Load()
+	if cfg.MCPToken != "secret" || len(cfg.MCPAllowedOrigins) != 2 || cfg.MCPAllowedOrigins[0] != "https://client.example" || cfg.MCPAllowedOrigins[1] != "http://localhost:3000" {
+		t.Fatal("MCP environment configuration was not loaded correctly")
+	}
+}
+
 func TestValidateAllowsDefaultSQLite(t *testing.T) {
 	cfg := &Config{DBDriver: "sqlite", DBPath: defaultDBPath}
 	if err := cfg.Validate(); err != nil {

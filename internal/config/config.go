@@ -29,6 +29,8 @@ type Config struct {
 	AdminPassword      string
 	JWTSecret          string
 	JWTExpireHours     int
+	MCPToken           string
+	MCPAllowedOrigins  []string
 }
 
 // Load 加载配置（支持环境变量）
@@ -58,6 +60,8 @@ func Load() *Config {
 		AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
 		JWTSecret:          getEnv("JWT_SECRET", ""),
 		JWTExpireHours:     expireHours,
+		MCPToken:           getEnv("MCP_TOKEN", ""),
+		MCPAllowedOrigins:  commaSeparated(os.Getenv("MCP_ALLOWED_ORIGINS")),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -131,4 +135,14 @@ func positiveEnv(key string, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+func commaSeparated(raw string) []string {
+	var values []string
+	for value := range strings.SplitSeq(raw, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }

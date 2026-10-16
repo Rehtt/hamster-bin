@@ -29,6 +29,7 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 │   ├── database/              # SQLite/MySQL/PostgreSQL 的 GORM 初始化、自动迁移、数据库实例管理
 │   ├── handlers/              # Gin HTTP handlers，处理分类、供应商、元件、批量保存、库存日志、解析和鉴权请求
 │   ├── middleware/            # Gin 中间件（鉴权）
+│   ├── mcp/                   # 远程 MCP：独立 Bearer/Origin 校验、类型化工具参数、工具注册及 SDK 集成测试
 │   ├── llm/                   # OpenAI-compatible Chat Completions 客户端
 │   ├── models/                # GORM 数据模型：Category、Supplier、Component、PreStock、StockLog、Task
 │   ├── price/                 # 单价（微元）与总价（分）换算及加权平均
@@ -65,9 +66,12 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 ## 后端结构
 
 - `cmd/server/main.go` 是唯一服务入口。它支持 `--version` 输出版本；正常启动时调用 `config.Load()`、`database.Init()`、注册 `parser.ParserManager`，然后通过 `router.Setup(db, parserManager, cfg, taskService)` 启动 Gin 服务。
-- `internal/config/config.go` 从环境变量读取配置，当前包含 `PORT`、`DB_DRIVER`、`DB_DSN`、`DB_PATH`、`IMAGE_DIR`、`LOG_LEVEL`、`SSL_CERT`、`SSL_KEY`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`、`JWT_EXPIRE_HOURS`、`TASK_WORKERS`、`TASK_TIMEOUT_SECONDS`。当 `ADMIN_USERNAME` 与 `ADMIN_PASSWORD` 均非空时启用鉴权，此时 `JWT_SECRET` 必填。
+- `internal/config/config.go` 从环境变量读取配置，当前包含 `PORT`、`DB_DRIVER`、`DB_DSN`、`DB_PATH`、`IMAGE_DIR`、`LOG_LEVEL`、`SSL_CERT`、`SSL_KEY`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`、`JWT_EXPIRE_HOURS`、`MCP_TOKEN`、`MCP_ALLOWED_ORIGINS`、`TASK_WORKERS`、`TASK_TIMEOUT_SECONDS`。当 `ADMIN_USERNAME` 与 `ADMIN_PASSWORD` 均非空时启用鉴权，此时 `JWT_SECRET` 必填。
 - `internal/auth/` 负责 JWT 签发/解析（Cookie 名 `hamster_token`）和管理员凭据恒定时间比较。
 - `internal/middleware/auth.go` 在鉴权启用时校验 Cookie JWT，保护业务 API。
+- `internal/mcp/` 使用官方 `github.com/modelcontextprotocol/go-sdk v1.8.0`，提供无状态 Streamable HTTP 和 JSON 响应。`http.go` 处理独立 Token/Origin/CORS，`inputs.go` 定义中文参数 Schema，`server.go` 注册工具并复用 repository/price；SDK 自动生成结构化结果与兼容 JSON 文本，并将业务错误转换为 `isError`。
+- `internal/repository/inventory_write.go` 为 MCP 补充带关联校验的创建事务和字段级更新。元件编号、价格分摊、保存及有价初始流水同事务提交；更新限制资料字段，保留未传字段与库存/单价。预入库仅允许编辑 pending，校验失败回滚。REST 契约保持原样，无新增迁移或前端页面。
+- 入出库与预入库确认在支持的数据库上使用事务行锁；SQLite 沿用事务写锁。库存与金额运算拒绝会造成整数溢出的输入。
 - `internal/database/database.go` 按 `DB_DRIVER` 打开 SQLite/MySQL/PostgreSQL 的 GORM 连接；SQLite 会创建数据目录并设置 pragma，所有数据库都会自动迁移 `Category`、`Supplier`、`Component`、`PreStock`、`StockLog`、`Task`。
 - `internal/models/models.go` 定义数据库表结构和 JSON 字段，是前后端数据契约的重要来源。
 - `internal/router/router.go` 暴露 `/api/v1` API；`/api/v1/auth/*` 为公开路由，其余业务接口在鉴权启用时需登录。静态资源仍从嵌入的 `web/dist` 提供。
@@ -176,6 +180,12 @@ docker compose down
 
 ## API 与配置约束
 
+- 远程 MCP 入口为 `/mcp`，不属于 `/api/v1`。`MCP_TOKEN` 默认为空，此时所有方法返回 404；配置后使用 `Authorization: Bearer <token>`，对固定长度 Token 摘要做恒定时间比较，与 Web Cookie/JWT 独立。单个部署级 Token 拥有全部 MCP 工具权限，修改环境变量并重启轮换。
+- `MCP_ALLOWED_ORIGINS` 为逗号分隔的完整 Origin 列表，空值默认仅同源或无 Origin；不支持通配符或路径。`/mcp` 跳过 REST 全局 CORS，先做独立 Origin 校验再处理预检，非法 Origin 返回 403，缺失/错误 Token 返回 401。代理头不参与同源判断；反向代理终止 HTTPS 后的外部浏览器 Origin 需配置白名单，回环上游 Host 应使用本机地址以兼容 SDK 的 DNS 重绑定保护。
+- MCP 工具共 17 个：`list_components`、`get_component`、`create_component`、`update_component`、`change_stock`；`list_pre_stocks`、`get_pre_stock`、`create_pre_stock`、`update_pre_stock`、`confirm_pre_stock`；`list_categories`、`create_category`、`list_suppliers`、`create_supplier`；`list_stock_logs`、`get_component_stock_logs`、`get_stats`。不开放删除、撤销、批量、平台解析和后台任务。
+- MCP 分页默认 page=1、page_size=20，上限 100；单元件流水 limit 默认 50，上限 100。预入库状态默认 pending（可选 confirmed/all），统计默认 month（可选 quarter/all）。查询复用 REST 的搜索、分类和排序规则。
+- MCP 创建必填名称、分类 ID 和非负数量（元件 stock_quantity、预入库 expected_quantity）；供应商使用已有 ID，同名创建供应商返回已有记录。总价为整数分，单价为微元；数量为零时不允许正数总价。元件编辑不接受库存/参考单价；局部编辑省略字段保持原值、空字符串清除文本、supplier_id=0 解除关联。`change_stock.amount` 正入负出且不得为零，入库总价非负，出库成本自动计算，复用 `ApplyStockChange`；预入库确认复用 `Confirm`。
+- MCP 集成测试位于 `internal/mcp/mcp_test.go`，通过官方 SDK 客户端覆盖发现、新旧版本握手、17 个工具、Schema/文本兼容、认证/Origin、写入与失败回滚。验证使用 `go fix ./...` → `go fmt ./...` → `go test . ./cmd/... ./internal/...` → `make build`。
 - 后端 API 基础路径是 `/api/v1`，前端 Axios 客户端也使用该路径。修改 API 前缀时必须同步修改前后端。
 - 主要 API 分组：
   - `/api/v1/auth/login`（POST，公开）
