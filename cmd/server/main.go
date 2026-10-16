@@ -46,7 +46,9 @@ func main() {
 	parserManager.Register(parser.NewTaobaoParser())        // 注册淘宝解析器（示例）
 
 	// 设置路由
-	taskService := tasks.New(repository.NewTaskRepository(database.GetDB()), parserManager, cfg.TaskWorkers, time.Duration(cfg.TaskTimeoutSeconds)*time.Second)
+	imageParser := parser.NewImageParser(llmClient)
+	taskService := tasks.New(repository.NewTaskRepository(database.GetDB()), parserManager, cfg.TaskWorkers, time.Duration(cfg.TaskTimeoutSeconds)*time.Second,
+		tasks.WithImages(imageParser, tasks.NewImageStore(cfg.ImageDir)))
 	if err := taskService.Start(); err != nil {
 		log.Fatalf("任务服务启动失败: %v", err)
 	}

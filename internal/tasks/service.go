@@ -18,13 +18,17 @@ import (
 
 const ComponentParse = "component_parse"
 const QRCodeParse = "qrcode_parse"
+const ImageParse = "image_parse"
 
-func ValidType(kind string) bool { return kind == ComponentParse || kind == QRCodeParse }
+func ValidType(kind string) bool {
+	return kind == ComponentParse || kind == QRCodeParse || kind == ImageParse
+}
 
 type Input struct {
-	Code       string `json:"code,omitempty"`
-	QRCodeData string `json:"qrcode_data,omitempty"`
-	UseLLM     bool   `json:"use_llm"`
+	Code       string      `json:"code,omitempty"`
+	QRCodeData string      `json:"qrcode_data,omitempty"`
+	UseLLM     bool        `json:"use_llm"`
+	Image      *ImageInput `json:"image,omitempty"`
 }
 type Request struct {
 	Type     string `json:"type"`
@@ -32,8 +36,14 @@ type Request struct {
 	Source   string `json:"source"`
 	RecordID *uint  `json:"record_id,omitempty"`
 }
+
+func (s *Service) ImageRequest(source string, recordID *uint) Request {
+	return Request{Type: ImageParse, Source: source, RecordID: recordID}
+}
+
 type Result struct {
-	Component  *parser.ComponentInfo `json:"component"`
+	Component  *parser.ComponentInfo `json:"component,omitempty"`
+	Items      []parser.ImageItem    `json:"items,omitempty"`
 	Quantity   int                   `json:"quantity,omitempty"`
 	QRCodeInfo *parser.QRCodeData    `json:"qrcode_info,omitempty"`
 }
@@ -41,19 +51,21 @@ type Result struct {
 // Executor 可替换为本地测试解析器；生产中只调用共享 ParserManager。
 type Executor func(context.Context, string, Input) (*Result, error)
 type Service struct {
-	Repo    *repository.TaskRepository
-	manager *parser.ParserManager
-	execute Executor
-	workers int
-	timeout time.Duration
-	mu      sync.Mutex // 领取/注册上下文与取消串行化，消除取消早于注册的竞态。
-	running map[uint]context.CancelFunc
-	ctx     context.Context
-	stop    context.CancelFunc
-	wg      sync.WaitGroup
+	Repo        *repository.TaskRepository
+	manager     *parser.ParserManager
+	imageParser *parser.ImageParser
+	images      *ImageStore
+	execute     Executor
+	workers     int
+	timeout     time.Duration
+	mu          sync.Mutex // 领取/注册上下文与取消串行化，消除取消早于注册的竞态。
+	running     map[uint]context.CancelFunc
+	ctx         context.Context
+	stop        context.CancelFunc
+	wg          sync.WaitGroup
 }
 
-func New(repo *repository.TaskRepository, manager *parser.ParserManager, workers int, timeout time.Duration) *Service {
+func New(repo *repository.TaskRepository, manager *parser.ParserManager, workers int, timeout time.Duration, options ...func(*Service)) *Service {
 	if workers < 1 {
 		workers = 2
 	}
@@ -61,18 +73,37 @@ func New(repo *repository.TaskRepository, manager *parser.ParserManager, workers
 		timeout = 120 * time.Second
 	}
 	s := &Service{Repo: repo, manager: manager, workers: workers, timeout: timeout, running: make(map[uint]context.CancelFunc)}
+	for _, option := range options {
+		option(s)
+	}
 	s.execute = s.parse
 	return s
 }
-func (s *Service) Validate(req Request) error {
-	if !ValidType(req.Type) {
-		return errors.New("不支持的任务类型")
-	}
+func (s *Service) validateSource(req Request) error {
 	if req.Source != "" && req.Source != "components" && req.Source != "pre-stocks" {
 		return errors.New("无效的来源页面")
 	}
 	if req.RecordID != nil && (*req.RecordID == 0 || req.Source == "") {
 		return errors.New("编辑记录需要有效来源和 ID")
+	}
+	return nil
+}
+func (s *Service) Validate(req Request) error {
+	if !ValidType(req.Type) {
+		return errors.New("不支持的任务类型")
+	}
+	if err := s.validateSource(req); err != nil {
+		return err
+	}
+	if req.Type == ImageParse {
+		if s.imageParser == nil || !s.imageParser.Configured() {
+			return errors.New("LLM 未配置或未启用图片解析")
+		}
+		_, err := s.images.path(req.Input.Image)
+		return err
+	}
+	if req.Input.Image != nil {
+		return errors.New("编码任务不能包含照片")
 	}
 	if len(req.Input.Code) > 4096 || len(req.Input.QRCodeData) > 65536 {
 		return errors.New("编码过长")
@@ -210,6 +241,8 @@ func (s *Service) run(ctx context.Context, t *models.Task) {
 		case errors.Is(err, context.DeadlineExceeded):
 			message = "任务执行超时，请重试"
 			code = "timeout"
+		case errors.Is(err, parser.ErrImageContent):
+			code = "content"
 		case errors.Is(err, parser.ErrParserUpstream):
 			message = "上游平台请求失败，请稍后重试"
 			code = "upstream"
@@ -232,6 +265,17 @@ func (s *Service) run(ctx context.Context, t *models.Task) {
 	}
 }
 func (s *Service) parse(ctx context.Context, kind string, input Input) (*Result, error) {
+	if kind == ImageParse {
+		data, mime, err := s.images.read(input.Image)
+		if err != nil {
+			return nil, err
+		}
+		items, err := s.imageParser.Parse(ctx, data, mime)
+		if err != nil {
+			return nil, err
+		}
+		return &Result{Items: items}, nil
+	}
 	result := &Result{}
 	code := input.Code
 	if kind == QRCodeParse {

@@ -8,6 +8,7 @@ export const taskPending = (task?: ParseTask) => task?.status === 'queued' || ta
 export const TaskContext = createContext<{
   tasks: Record<number, ParseTask>;
   submit: (request: TaskRequest) => Promise<ParseTask>;
+  submitImage: (file: File, source: TaskRequest['source'], recordID?: number) => Promise<ParseTask>;
   track: (task: ParseTask) => void;
 } | null>(null);
 export function useTasks() {

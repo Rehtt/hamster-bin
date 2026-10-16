@@ -23,7 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Loader2, Hash, Download, Coins, Columns3, GripVertical, PackageMinus } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions, type ParsedComponentInfo } from '../types';
+import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions, type ParsedComponentInfo, type ReviewedImageItem, type ParseTask } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
@@ -33,6 +33,10 @@ import { CollapsibleFilterPanel, type CollapsibleFilterPanelHandle } from '../co
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 import { RowActionsMenu } from '../components/ui/RowActionsMenu';
 import { BatchStockOutModal } from '../components/BatchStockOutModal';
+import { usePhotoDrafts } from '../hooks/usePhotoDrafts';
+import { PhotoDraftNavigation } from '../components/PhotoDraftNavigation';
+import { photoComponentInfo } from '../utils/photoResult';
+import { PhotoParseModal } from '../components/PhotoParseModal';
 const QRScanner = lazy(() => import('../components/QRScanner'));
 const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
@@ -534,6 +538,11 @@ export default function Components() {
   const [platformCode, setPlatformCode] = useState('');
 
   const [useAIParse, setUseAIParse] = useState(false);
+  const [isPhotoParseOpen, setIsPhotoParseOpen] = useState(false);
+  const photoDrafts = usePhotoDrafts<PhotoDraft>();
+  const [recoveredPhotoTask, setRecoveredPhotoTask] = useState<ParseTask>();
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   const [isMobile, setIsMobile] = useState(false);
 
@@ -556,10 +565,11 @@ export default function Components() {
   });
 
   type ParseSnapshot = { form: Partial<Component>; category: string; supplier: string; price: string; preview: string; file: File | null };
+  type PhotoDraft = ParseSnapshot & { platformCode: string };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
     const parsedForm = parsedInfoToFormData(component);
     if (snapshot && selectedFile !== snapshot.file) delete parsedForm.image_url;
-    if (quantity && quantity > 0) parsedForm.stock_quantity = quantity;
+    if (quantity !== undefined && quantity >= 0) parsedForm.stock_quantity = quantity;
     const supplier = getSupplierNameFromPlatform(component.platform_name);
     if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
     const category = component.category_name || component.category?.name;
@@ -573,7 +583,7 @@ export default function Components() {
       setFormTotalPriceYuan(prev => !snapshot || prev === snapshot.price ? (component.price! * qty).toFixed(2) : prev);
     }
   };
-  const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => applyParsedComponent(result.component, result.quantity, snapshot));
+  const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => { if (result.component) applyParsedComponent(result.component, result.quantity, snapshot); });
   const isImportParsing = parseTask.busy;
   const parseSnapshot = (): ParseSnapshot => ({ form: { ...formData }, category: categoryInput, supplier: supplierInput, price: formTotalPriceYuan, preview: previewUrl, file: selectedFile });
 
@@ -1036,6 +1046,8 @@ export default function Components() {
   // Form Handlers
   const openForm = (component?: Component) => {
     parseTask.reset();
+    photoDrafts.reset();
+    setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     setSelectedFile(null);
     setShowImageMenu(false);
     setIsCopyingComponent(false);
@@ -1066,6 +1078,7 @@ export default function Components() {
 
   const openCopyForm = (component: Component) => {
     parseTask.reset();
+    photoDrafts.reset(); setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     setSelectedFile(null);
     setShowImageMenu(false);
     setEditingComponent(null);
@@ -1116,8 +1129,49 @@ export default function Components() {
     setShowImageMenu(false);
   };
 
+  const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
+  const loadPhotoDraft = (draft: PhotoDraft) => {
+    parseTask.reset();
+    setFormData(draft.form); setCategoryInput(draft.category); setSupplierInput(draft.supplier);
+    setFormTotalPriceYuan(draft.price); setSelectedFile(draft.file); setPreviewUrl(draft.preview);
+    setPlatformCode(draft.platformCode); setShowImageMenu(false);
+  };
+  const switchPhotoDraft = (index: number) => loadPhotoDraft(photoDrafts.select(index, currentPhotoDraft()));
   const handleFormSubmit = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
+      if (!editingComponent && photoDrafts.drafts.length) {
+        const drafts = photoDrafts.merge(currentPhotoDraft());
+        const invalid = drafts.findIndex(draft => !draft.form.name?.trim() || !draft.category.trim() || !Number.isInteger(draft.form.stock_quantity) || Number(draft.form.stock_quantity) < 0);
+        if (invalid >= 0) {
+          switchPhotoDraft(invalid);
+          toast.error(`请补全第 ${invalid + 1} 条的名称、分类和非负整数数量`);
+          return;
+        }
+        const res = await client.post('/components/batch', { items: drafts.map(draft => ({
+          ...draft.form, id: undefined, category: undefined, supplier: undefined,
+          category_id: undefined, supplier_id: undefined,
+          component_number: draft.form.component_number?.trim() || undefined,
+          category_name: draft.category.trim(), supplier_name: draft.supplier.trim(),
+          total_price_cents: yuanToCents(draft.price),
+        })) });
+        const created = res.data.data as Component[];
+        for (const [index, draft] of drafts.entries()) {
+          if (!draft.file) continue;
+          const image = new FormData(); image.append('image', draft.file);
+          try { await client.post(`/components/${created[index].id}/image`, image); }
+          catch { toast.error(`第 ${index + 1} 条 ${draft.form.name} 图片上传失败，元件已保存`); }
+        }
+        toast.success(`已批量添加 ${drafts.length} 个元件`);
+        photoDrafts.reset(); parseTask.reset(); setIsFormOpen(false);
+        await Promise.all([fetchComponents(pagination.page, pagination.page_size), fetchComponentOptions(), fetchCategories(), fetchSuppliers()]);
+        return;
+      }
+      if (!formData.name?.trim() || !Number.isInteger(formData.stock_quantity) || Number(formData.stock_quantity) < 0) {
+        toast.error('请填写名称和非负整数数量'); return;
+      }
       if (!categoryInput.trim()) {
         toast.error('请输入分类');
         return;
@@ -1206,7 +1260,12 @@ export default function Components() {
     } catch (error) {
       console.error(error);
       const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '保存失败');
+      const message = err.response?.data?.error || '保存失败';
+      const failedItem = /第 (\d+) 条/.exec(message);
+      if (failedItem && photoDrafts.drafts[Number(failedItem[1]) - 1]) switchPhotoDraft(Number(failedItem[1]) - 1);
+      toast.error(message);
+    } finally {
+      savingRef.current = false; setSaving(false);
     }
   };
 
@@ -1216,9 +1275,29 @@ export default function Components() {
     await parseTask.start({ type: 'component_parse', input: { code: parseCode, use_llm: useAIParse }, source: 'components', record_id: editingComponent?.id }, parseSnapshot());
   };
 
+  const applyPhotoResults = (items: ReviewedImageItem[]) => {
+    parseTask.reset();
+    const first = items[0];
+    if (editingComponent) {
+      applyParsedComponent(photoComponentInfo(first), first.quantity);
+      setCategoryInput(first.category_name); setSupplierInput(first.supplier_name);
+      return;
+    }
+    const drafts: PhotoDraft[] = items.map((item, index) => ({
+      form: { ...mergeParsed(index === 0 ? formData : {}, parsedInfoToFormData(photoComponentInfo(item))), stock_quantity: item.quantity },
+      category: item.category_name, supplier: item.supplier_name,
+      price: index === 0 ? formTotalPriceYuan : '', preview: index === 0 ? previewUrl : '',
+      file: index === 0 ? selectedFile : null, platformCode: item.supplier_part_number,
+    }));
+    photoDrafts.start(drafts); loadPhotoDraft(drafts[0]);
+    toast.success(`已载入 ${items.length} 条照片识别结果，请逐条确认后保存`);
+  };
+
   useTaskApplication<Component>('components', (task, record) => {
     openForm(record);
-    applyParsedComponent(task.result!.component, task.result!.quantity);
+    if (task.type === 'image_parse') {
+      setRecoveredPhotoTask(task); setIsPhotoParseOpen(true);
+    } else if (task.result?.component) applyParsedComponent(task.result.component, task.result.quantity);
   });
 
   // Stock Handlers
@@ -1738,20 +1817,23 @@ export default function Components() {
         onSuccess={handleBatchStockOutSuccess}
       />
 
+      <PhotoParseModal isOpen={isPhotoParseOpen} onClose={() => { setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined); }} source="components" recordID={editingComponent?.id} initialTask={recoveredPhotoTask} onConfirm={applyPhotoResults} />
+
       {/* Edit/Add Modal */}
       <Modal 
-        isOpen={isFormOpen} 
+        isOpen={isFormOpen && !isPhotoParseOpen}
         onClose={() => { parseTask.reset(); setIsFormOpen(false); }}
         title={editingComponent ? '编辑元件' : isCopyingComponent ? '复制元件' : '添加元件'}
         footer={
           <>
             <Button variant="outline" onClick={() => { parseTask.reset(); setIsFormOpen(false); }}>取消</Button>
-            <Button onClick={handleFormSubmit}>保存</Button>
+            <Button onClick={handleFormSubmit} disabled={saving}>保存</Button>
           </>
         }
         className="max-w-2xl"
       >
         <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
+          <PhotoDraftNavigation index={photoDrafts.index} count={photoDrafts.drafts.length} disabled={saving} onSelect={switchPhotoDraft} />
              {/* Import Tools */}
              <div className="bg-secondary/20 p-4 rounded-md space-y-4">
                 <Label>{editingComponent ? '根据供应商料号更新' : '快速导入'}</Label>
@@ -1784,6 +1866,9 @@ export default function Components() {
                         <QrCode className="mr-2 h-4 w-4" /> 扫码
                       </Button>
                     )}
+                    <Button variant="outline" onClick={() => setIsPhotoParseOpen(true)} disabled={isImportParsing}>
+                      <Camera className="mr-2 h-4 w-4" />拍照 AI
+                    </Button>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-muted-foreground">
                     <input
@@ -1954,8 +2039,8 @@ export default function Components() {
                         </Button>
                         <Input 
                             type="number" 
-                            value={formData.stock_quantity} 
-                            onChange={e => setFormData({...formData, stock_quantity: Number(e.target.value)})} 
+                            value={formData.stock_quantity ?? ''}
+                            onChange={e => setFormData({...formData, stock_quantity: e.target.value === '' ? undefined : Number(e.target.value)})}
                             className="text-center"
                         />
                          <Button 

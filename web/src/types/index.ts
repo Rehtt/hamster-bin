@@ -142,12 +142,29 @@ export interface ParsedComponentInfo {
   category?: Category;
 }
 export interface TaskResult {
-  component: ParsedComponentInfo;
+  component?: ParsedComponentInfo;
+  items?: ParsedImageItem[];
   quantity?: number;
   qrcode_info?: { code: string; quantity: number; raw_data: string; platform: string };
 }
+export interface ParsedImageItem {
+  name: string;
+  category_name: string;
+  model: string;
+  manufacturer: string;
+  value: string;
+  package: string;
+  supplier_name: string;
+  supplier_part_number: string;
+  description: string;
+  quantity: number | null;
+}
+// 核对后数量必填；原始照片任务允许未知数量 null。
+export interface ReviewedImageItem extends ParsedImageItem {
+  quantity: number;
+}
 export interface TaskRequest {
-  type: 'component_parse' | 'qrcode_parse';
+  type: 'component_parse' | 'qrcode_parse' | 'image_parse';
   input: { code?: string; qrcode_data?: string; use_llm: boolean };
   source: 'components' | 'pre-stocks';
   record_id?: number;

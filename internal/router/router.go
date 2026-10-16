@@ -40,6 +40,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 	statsHandler := handlers.NewStatsHandler(db)
 	parserHandler := handlers.NewParserHandler(parserManager)
 	taskHandler := handlers.NewTaskHandler(taskService)
+	batchHandler := handlers.NewBatchHandler(db)
 	authHandler := handlers.NewAuthHandler(cfg)
 	authMiddleware := middleware.AuthMiddleware(cfg)
 
@@ -58,10 +59,12 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 		{
 			taskRoutes := protected.Group("/tasks")
 			taskRoutes.POST("", taskHandler.Create)
+			taskRoutes.POST("/image", taskHandler.CreateImage)
 			taskRoutes.GET("", taskHandler.List)
 			taskRoutes.GET("/:id", taskHandler.Get)
 			taskRoutes.POST("/:id/cancel", taskHandler.Cancel)
 			taskRoutes.POST("/:id/retry", taskHandler.Retry)
+			taskRoutes.GET("/:id/image", taskHandler.Image)
 
 			// 分类管理
 			categories := protected.Group("/categories")
@@ -89,6 +92,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 				components.GET("/export", componentHandler.ExportCSV)
 				components.PATCH("/batch-location", componentHandler.BatchUpdateLocation)
 				components.POST("/batch-stock-out", componentHandler.BatchStockOut)
+				components.POST("/batch", batchHandler.CreateComponents)
 				components.PATCH("/generate-numbers", componentHandler.GenerateMissingNumbers)
 				components.GET("/:id", componentHandler.GetByID)
 				components.POST("", componentHandler.Create)
@@ -115,6 +119,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 				preStocks.GET("", preStockHandler.GetAll)
 				preStocks.GET("/:id", preStockHandler.GetByID)
 				preStocks.POST("", preStockHandler.Create)
+				preStocks.POST("/batch", batchHandler.CreatePreStocks)
 				preStocks.PUT("/:id", preStockHandler.Update)
 				preStocks.DELETE("/:id", preStockHandler.Delete)
 				preStocks.POST("/:id/confirm", preStockHandler.Confirm)

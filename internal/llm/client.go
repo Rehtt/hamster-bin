@@ -23,8 +23,31 @@ type Client struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string        `json:"role"`
+	Content string        `json:"content"`
+	Parts   []ContentPart `json:"-"`
+}
+
+type ContentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
+// MarshalJSON 保持文本消息的字符串格式，仅图片消息使用多模态内容数组。
+func (m Message) MarshalJSON() ([]byte, error) {
+	var content any = m.Content
+	if len(m.Parts) > 0 {
+		content = m.Parts
+	}
+	return json.Marshal(struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}{m.Role, content})
 }
 
 type chatRequest struct {

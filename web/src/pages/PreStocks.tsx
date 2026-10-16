@@ -2,11 +2,11 @@ import { useParseTask } from '../hooks/useParseTask';
 import { useTaskApplication } from '../hooks/useTaskApplication';
 import { ParseTaskStatus } from '../components/ParseTaskStatus';
 import { mergeParsed } from '../utils/parseResult';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Edit, Hash, Loader2, Minus, Plus, QrCode, Search, Trash2 } from 'lucide-react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, CheckCircle2, Edit, Hash, Loader2, Minus, Plus, QrCode, Search, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Category, type ComponentOptions, type Pagination, type PreStock, type PreStockStatus, type Supplier, type ParsedComponentInfo } from '../types';
+import { type Category, type ComponentOptions, type Pagination, type PreStock, type PreStockStatus, type Supplier, type ParsedComponentInfo, type ReviewedImageItem, type ParseTask } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
@@ -18,6 +18,10 @@ import { RowActionsMenu } from '../components/ui/RowActionsMenu';
 import { calcUnitPriceMicro, formatCents, formatMicro, yuanToCents } from '../utils/price';
 import { copyToClipboard } from '../utils/clipboard';
 import { cn } from '../utils/cn';
+import { usePhotoDrafts } from '../hooks/usePhotoDrafts';
+import { PhotoDraftNavigation } from '../components/PhotoDraftNavigation';
+import { photoComponentInfo } from '../utils/photoResult';
+import { PhotoParseModal } from '../components/PhotoParseModal';
 
 const QRScanner = lazy(() => import('../components/QRScanner'));
 
@@ -36,7 +40,7 @@ type PreStockForm = {
   package: string;
   supplier_part_number: string;
   description: string;
-  expected_quantity: number;
+  expected_quantity: number | null;
   total_price_yuan: string;
   location: string;
   datasheet_url: string;
@@ -95,6 +99,10 @@ export default function PreStocks() {
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const [platformCode, setPlatformCode] = useState('');
   const [useAIParse, setUseAIParse] = useState(false);
+  const [isPhotoParseOpen, setIsPhotoParseOpen] = useState(false);
+  const photoDrafts = usePhotoDrafts<PhotoDraft>();
+  const [recoveredPhotoTask, setRecoveredPhotoTask] = useState<ParseTask>();
+  const savingRef = useRef(false);
 
   const [saving, setSaving] = useState(false);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
@@ -168,6 +176,8 @@ export default function PreStocks() {
 
   const openForm = (item?: PreStock) => {
     parseTask.reset();
+    photoDrafts.reset();
+    setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     if (item) {
       setEditingItem(item);
       setForm({
@@ -179,7 +189,7 @@ export default function PreStocks() {
         package: item.package || '',
         supplier_part_number: item.supplier_part_number || '',
         description: item.description || '',
-        expected_quantity: item.expected_quantity || 1,
+        expected_quantity: item.expected_quantity ?? 1,
         total_price_yuan: item.total_price_cents ? String((item.total_price_cents / 100).toFixed(2)) : '',
         location: item.location || '',
         datasheet_url: item.datasheet_url || '',
@@ -239,18 +249,39 @@ export default function PreStocks() {
     }
   };
 
+  const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
+  const loadPhotoDraft = (draft: PhotoDraft) => {
+    parseTask.reset(); setForm(draft.form); setCategoryInput(draft.category);
+    setSupplierInput(draft.supplier); setPlatformCode(draft.platformCode);
+  };
+  const switchPhotoDraft = (index: number) => loadPhotoDraft(photoDrafts.select(index, currentPhotoDraft()));
   const handleSubmit = async () => {
-    if (!form.name.trim()) {
-      toast.error('请输入名称');
-      return;
-    }
-    if (form.expected_quantity < 0) {
-      toast.error('预计数量不能小于 0');
-      return;
-    }
-
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
+      if (!editingItem && photoDrafts.drafts.length) {
+        const drafts = photoDrafts.merge(currentPhotoDraft());
+        const invalid = drafts.findIndex(draft => !draft.form.name.trim() || !draft.category.trim() || !Number.isInteger(draft.form.expected_quantity) || Number(draft.form.expected_quantity) < 0);
+        if (invalid >= 0) {
+          switchPhotoDraft(invalid);
+          toast.error(`请补全第 ${invalid + 1} 条的名称、分类和非负整数数量`);
+          return;
+        }
+        await client.post('/pre-stocks/batch', { items: drafts.map(draft => ({
+          ...draft.form, total_price_yuan: undefined,
+          component_number: draft.form.component_number.trim() || undefined,
+          category_name: draft.category.trim(), supplier_name: draft.supplier.trim(),
+          total_price_cents: yuanToCents(draft.form.total_price_yuan),
+        })) });
+        toast.success(`已批量创建 ${drafts.length} 条预入库记录`);
+        photoDrafts.reset(); parseTask.reset(); setIsFormOpen(false);
+        await Promise.all([fetchItems(pagination.page, pagination.page_size), fetchComponentOptions(), fetchCategories(), fetchSuppliers()]);
+        return;
+      }
+      if (!form.name.trim() || !Number.isInteger(form.expected_quantity) || Number(form.expected_quantity) < 0) {
+        toast.error('请填写名称和非负整数预计数量'); return;
+      }
       const categoryID = await ensureCategoryID();
       if (!categoryID) return;
       const supplierID = await ensureSupplierID();
@@ -287,13 +318,17 @@ export default function PreStocks() {
       await fetchComponentOptions();
     } catch (error) {
       const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '保存失败');
+      const message = err.response?.data?.error || '保存失败';
+      const failedItem = /第 (\d+) 条/.exec(message);
+      if (failedItem && photoDrafts.drafts[Number(failedItem[1]) - 1]) switchPhotoDraft(Number(failedItem[1]) - 1);
+      toast.error(message);
     } finally {
-      setSaving(false);
+      savingRef.current = false; setSaving(false);
     }
   };
 
   type ParseSnapshot = { form: PreStockForm; category: string; supplier: string };
+  type PhotoDraft = ParseSnapshot & { platformCode: string };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
     const parsed: Partial<PreStockForm> = {
       name: component.name || component.model,
@@ -301,13 +336,31 @@ export default function PreStocks() {
       package: component.package, supplier_part_number: component.platform_code,
       description: component.description, datasheet_url: component.datasheet_url, image_url: component.image_url,
     };
-    if (quantity && quantity > 0) parsed.expected_quantity = quantity;
+    if (quantity !== undefined && quantity >= 0) parsed.expected_quantity = quantity;
     setForm(prev => mergeParsed(prev, parsed, snapshot?.form));
     if (component.category_name) setCategoryInput(prev => !snapshot || prev === snapshot.category ? component.category_name! : prev);
     const supplier = getSupplierNameFromPlatform(component.platform_name);
     if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
   };
-  const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => applyParsedComponent(result.component, result.quantity, snapshot));
+  const applyPhotoResults = (items: ReviewedImageItem[]) => {
+    parseTask.reset();
+    const first = items[0];
+    if (editingItem) {
+      applyParsedComponent(photoComponentInfo(first), first.quantity);
+      setCategoryInput(first.category_name); setSupplierInput(first.supplier_name);
+      return;
+    }
+    const drafts: PhotoDraft[] = items.map((item, index) => ({
+      form: { ...(index === 0 ? form : EMPTY_FORM), name: item.name, model: item.model,
+        manufacturer: item.manufacturer, value: item.value, package: item.package,
+        supplier_part_number: item.supplier_part_number, description: item.description,
+        expected_quantity: item.quantity },
+      category: item.category_name, supplier: item.supplier_name, platformCode: item.supplier_part_number,
+    }));
+    photoDrafts.start(drafts); loadPhotoDraft(drafts[0]);
+    toast.success(`已载入 ${items.length} 条照片识别结果，请逐条确认后保存`);
+  };
+  const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => { if (result.component) applyParsedComponent(result.component, result.quantity, snapshot); });
   const isParsing = parseTask.busy;
   const parseSnapshot = (): ParseSnapshot => ({ form: { ...form }, category: categoryInput, supplier: supplierInput });
   const parsePlatform = async () => {
@@ -324,8 +377,12 @@ export default function PreStocks() {
   };
   useTaskApplication<PreStock>('pre-stocks', (task, record) => {
     openForm(record);
-    applyParsedComponent(task.result!.component, task.result!.quantity);
-    setPlatformCode(task.result!.component.platform_code || '');
+    if (task.type === 'image_parse') {
+      setRecoveredPhotoTask(task); setIsPhotoParseOpen(true);
+    } else if (task.result?.component) {
+      applyParsedComponent(task.result.component, task.result.quantity);
+      setPlatformCode(task.result.component.platform_code || '');
+    }
   });
 
   const handleConfirm = async (item: PreStock) => {
@@ -391,7 +448,7 @@ export default function PreStocks() {
   };
 
   const totalPriceCents = yuanToCents(form.total_price_yuan);
-  const showUnitPrice = form.expected_quantity > 0 && totalPriceCents > 0;
+  const showUnitPrice = (form.expected_quantity ?? 0) > 0 && totalPriceCents > 0;
 
   return (
     <div className="space-y-6">
@@ -559,8 +616,10 @@ export default function PreStocks() {
         </div>
       </div>
 
+      <PhotoParseModal isOpen={isPhotoParseOpen} onClose={() => { setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined); }} source="pre-stocks" recordID={editingItem?.id} initialTask={recoveredPhotoTask} onConfirm={applyPhotoResults} />
+
       <Modal
-        isOpen={isFormOpen}
+        isOpen={isFormOpen && !isPhotoParseOpen}
         onClose={() => { parseTask.reset(); setIsFormOpen(false); }}
         title={editingItem ? '编辑预入库' : '新建预入库'}
         className="max-w-2xl"
@@ -574,6 +633,7 @@ export default function PreStocks() {
         }
       >
         <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
+          <PhotoDraftNavigation index={photoDrafts.index} count={photoDrafts.drafts.length} disabled={saving} onSelect={switchPhotoDraft} />
           <div className="bg-secondary/20 p-4 rounded-md space-y-4">
             <Label>快速导入</Label>
             <ParseTaskStatus task={parseTask.task} />
@@ -586,6 +646,7 @@ export default function PreStocks() {
               <Button onClick={parsePlatform} disabled={isParsing || !platformCode.trim()}>
                 {isParsing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />解析中...</> : '解析'}
               </Button>
+              <Button variant="outline" onClick={() => setIsPhotoParseOpen(true)} disabled={isParsing}><Camera className="mr-2 h-4 w-4" />拍照 AI</Button>
               <Button variant="outline" onClick={() => setIsScannerOpen(true)} disabled={isParsing}>
                 <QrCode className="mr-2 h-4 w-4" /> 扫码
               </Button>
@@ -781,28 +842,28 @@ export default function PreStocks() {
                   variant="outline"
                   size="icon"
                   className="h-10 w-10 shrink-0"
-                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: Math.max(0, prev.expected_quantity - 1) }))}
+                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: Math.max(0, (prev.expected_quantity ?? 0) - 1) }))}
                 >
                   <Minus className="h-4 w-4" />
                 </Button>
                 <Input
                   type="number"
                   min="0"
-                  value={form.expected_quantity}
-                  onChange={e => setForm({ ...form, expected_quantity: Number(e.target.value) })}
+                  value={form.expected_quantity ?? ''}
+                  onChange={e => setForm({ ...form, expected_quantity: e.target.value === '' ? null : Number(e.target.value) })}
                   className="text-center"
                 />
                 <Button
                   variant="outline"
                   size="icon"
                   className="h-10 w-10 shrink-0"
-                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: prev.expected_quantity + 1 }))}
+                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: (prev.expected_quantity ?? 0) + 1 }))}
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
               <QuantityShortcuts
-                value={form.expected_quantity}
+                value={form.expected_quantity ?? undefined}
                 onSelect={quantity => setForm(prev => ({ ...prev, expected_quantity: quantity }))}
               />
             </div>
@@ -818,7 +879,7 @@ export default function PreStocks() {
               />
               {showUnitPrice && (
                 <p className="text-xs text-muted-foreground">
-                  分摊单价：{formatMicro(calcUnitPriceMicro(totalPriceCents, form.expected_quantity))}
+                  分摊单价：{formatMicro(calcUnitPriceMicro(totalPriceCents, form.expected_quantity ?? 0))}
                 </p>
               )}
             </div>

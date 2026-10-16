@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -30,6 +31,64 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"data": t})
+}
+
+func (h *TaskHandler) CreateImage(c *gin.Context) {
+	source := c.PostForm("source")
+	var recordID *uint
+	if raw := c.PostForm("record_id"); raw != "" {
+		id, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || id == 0 {
+			c.JSON(400, gin.H{"error": "无效的记录 ID"})
+			return
+		}
+		value := uint(id)
+		recordID = &value
+	}
+	file, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(400, gin.H{"error": "请上传照片"})
+		return
+	}
+	if file.Size > tasks.MaxImageBytes {
+		c.JSON(400, gin.H{"error": "照片不能超过 10 MiB"})
+		return
+	}
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "读取照片失败"})
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, tasks.MaxImageBytes+1))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "读取照片失败"})
+		return
+	}
+	t, err := h.service.SubmitImage(h.service.ImageRequest(source, recordID), file.Filename, data)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"data": t})
+}
+
+func (h *TaskHandler) Image(c *gin.Context) {
+	id, ok := taskID(c)
+	if !ok {
+		return
+	}
+	t, err := h.service.Repo.Get(id)
+	if err != nil {
+		taskError(c, err)
+		return
+	}
+	path, err := h.service.ImagePath(t)
+	if err != nil {
+		c.JSON(404, gin.H{"error": err.Error()})
+		return
+	}
+	c.File(path)
 }
 func taskID(c *gin.Context) (uint, bool) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)

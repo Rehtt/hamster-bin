@@ -8,7 +8,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 
-const typeLabel = (task: ParseTask) => `${task.type === 'qrcode_parse' ? '二维码' : '平台编码'}${task.input.use_llm ? ' · AI' : ''}`;
+const typeLabel = (task: ParseTask) => `${task.type === 'qrcode_parse' ? '二维码' : task.type === 'image_parse' ? '照片' : '平台编码'}${task.input.use_llm || task.type === 'image_parse' ? ' · AI' : ''}`;
 export default function Tasks() {
   const [items, setItems] = useState<ParseTask[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
@@ -74,11 +74,11 @@ export default function Tasks() {
       <select aria-label="任务状态" className="border rounded-md p-2 bg-background" value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
         <option value="">全部状态</option>{Object.entries(taskStatusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
       </select>
-      <select aria-label="任务类型" className="border rounded-md p-2 bg-background" value={type} onChange={e => { setType(e.target.value); setPage(1); }}><option value="">全部类型</option><option value="component_parse">平台编码</option><option value="qrcode_parse">二维码</option></select>
+      <select aria-label="任务类型" className="border rounded-md p-2 bg-background" value={type} onChange={e => { setType(e.target.value); setPage(1); }}><option value="">全部类型</option><option value="component_parse">平台编码</option><option value="qrcode_parse">二维码</option><option value="image_parse">照片 AI</option></select>
     </div>
     {error && <p role="alert" className="text-destructive">{error}</p>}
     <div className="border rounded-lg overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-muted"><tr>{['任务', '类型 / 来源', '状态', '创建时间', '操作'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead><tbody>
-      {items.map(task => <tr key={task.id} className="border-t"><td className="p-3"><button className="underline" onClick={() => setDetail(task)}>#{task.id} {task.input.code || task.result?.component.platform_code || '二维码'}</button></td><td className="p-3">{typeLabel(task)}<br />{task.source === 'pre-stocks' ? '预入库' : '元件管理'}{task.record_id ? ` #${task.record_id}` : ' · 新增'}</td><td className="p-3">{taskStatusLabel[task.status]}</td><td className="p-3 whitespace-nowrap">{new Date(task.created_at).toLocaleString()}</td><td className="p-3">{actions(task)}</td></tr>)}
+      {items.map(task => <tr key={task.id} className="border-t"><td className="p-3"><button className="underline" onClick={() => setDetail(task)}>#{task.id} {task.input.code || task.result?.component?.platform_code || (task.type === 'image_parse' ? '照片' : '二维码')}</button></td><td className="p-3">{typeLabel(task)}<br />{task.source === 'pre-stocks' ? '预入库' : '元件管理'}{task.record_id ? ` #${task.record_id}` : ' · 新增'}</td><td className="p-3">{taskStatusLabel[task.status]}</td><td className="p-3 whitespace-nowrap">{new Date(task.created_at).toLocaleString()}</td><td className="p-3">{actions(task)}</td></tr>)}
       {!items.length && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">暂无任务</td></tr>}
     </tbody></table></div>
     <div className="flex flex-wrap items-center gap-3"><span>共 {pagination.total} 个任务</span><Button variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button><span>{page} / {Math.max(1, pagination.total_page || 0)}</span><Button variant="outline" disabled={page >= (pagination.total_page || 0)} onClick={() => setPage(page + 1)}>下一页</Button></div>
@@ -88,6 +88,7 @@ export default function Tasks() {
         {detail.retry_of_id && <p>重试来源：#{detail.retry_of_id}</p>}
         <p className="text-sm text-muted-foreground">开始：{detail.started_at ? new Date(detail.started_at).toLocaleString() : '—'}<br />结束：{detail.finished_at ? new Date(detail.finished_at).toLocaleString() : '—'}</p>
         <p className="font-medium">输入</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.input, null, 2)}</pre>
+        {detail.type === 'image_parse' && <img src={`/api/v1/tasks/${detail.id}/image`} alt="照片解析原图" className="max-h-64 max-w-full rounded border object-contain" />}
         {detail.error && <p role="alert" className="text-destructive">{detail.error}（{detail.error_code}）</p>}
         {detail.result && <><p className="font-medium">解析结果</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.result, null, 2)}</pre></>}
       </div>}

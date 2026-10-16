@@ -30,6 +30,12 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
     toast.success(`已加入任务 #${task.id}`);
     return task;
   }, [track]);
+  const submitImage = useCallback(async (file: File, source: TaskRequest['source'], recordID?: number) => {
+    const form = new FormData(); form.append('image', file); form.append('source', source);
+    if (recordID) form.append('record_id', String(recordID));
+    const res = await client.post('/tasks/image', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const task = res.data.data as ParseTask; track(task); toast.success(`已加入照片解析任务 #${task.id}`); return task;
+  }, [track]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -76,5 +82,5 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
     return () => { controller.abort(); window.clearInterval(timer); };
   }, [persist, track]);
 
-  return <TaskContext.Provider value={{ tasks, submit, track }}>{children}</TaskContext.Provider>;
+  return <TaskContext.Provider value={{ tasks, submit, submitImage, track }}>{children}</TaskContext.Provider>;
 }

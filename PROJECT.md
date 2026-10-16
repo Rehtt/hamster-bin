@@ -27,13 +27,13 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 │   ├── config/                # 环境变量配置加载
 │   ├── auth/                  # JWT 签发/解析与凭据校验
 │   ├── database/              # SQLite/MySQL/PostgreSQL 的 GORM 初始化、自动迁移、数据库实例管理
-│   ├── handlers/              # Gin HTTP handlers，处理分类、供应商、元件、库存日志、解析和鉴权请求
+│   ├── handlers/              # Gin HTTP handlers，处理分类、供应商、元件、批量保存、库存日志、解析和鉴权请求
 │   ├── middleware/            # Gin 中间件（鉴权）
 │   ├── llm/                   # OpenAI-compatible Chat Completions 客户端
 │   ├── models/                # GORM 数据模型：Category、Supplier、Component、PreStock、StockLog、Task
 │   ├── price/                 # 单价（微元）与总价（分）换算及加权平均
-│   ├── parser/                # 平台解析器、二维码解析、解析器管理器和解析测试
-│   ├── tasks/                 # 持久化队列执行、校验、超时、取消、重试与中断恢复
+│   ├── parser/                # 平台解析器、二维码/照片 AI 解析、解析器管理器和解析测试
+│   ├── tasks/                 # 持久化队列执行、照片存储、校验、超时、取消、重试与中断恢复
 │   ├── repository/            # 数据访问封装，按业务实体拆分
 │   ├── router/                # API 路由、CORS、嵌入式前端静态文件服务和 SPA fallback
 │   └── version/               # 项目版本变量，默认 v1.0.0，release 构建时通过 ldflags 注入 git tag
@@ -75,8 +75,8 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 - `internal/price/price.go` 集中实现单价分摊（`UnitPriceMicro`）、出库成本（`OutboundTotalCents`）、加权平均（`WeightedAverageUnitPriceMicro`）与撤销反算（`ReverseAverageUnitPriceMicro`）；repository 与 handler 应复用此包，避免重复四舍五入逻辑。
 - `internal/repository/` 封装数据库访问。新增复杂查询时优先放在 repository，避免 handler 直接堆叠大量查询逻辑。
 - `internal/version/` 保存项目版本变量，默认版本为 `v1.0.0`；发布构建通过 Makefile 的 `VERSION` 变量注入 git tag。
-- `internal/llm/` 使用标准库实现 OpenAI-compatible `/chat/completions` JSON 响应调用，供解析器按需使用。
-- `internal/parser/` 包含 LCSC、淘宝、二维码解析及解析器管理器。LCSC 支持在 `/components/parse` 请求传入 `use_llm: true` 时使用 LLM 辅助解析元件参数。新增平台时应遵循现有 parser 接口/注册方式，并在启动入口注册。
+- `internal/llm/` 使用标准库实现 OpenAI-compatible `/chat/completions` JSON 响应调用，支持文本消息和图片 data URL 多模态消息，供解析器按需使用。
+- `internal/parser/` 包含 LCSC、淘宝、二维码和照片 AI 解析及解析器管理器。LCSC 支持在 `/components/parse` 请求传入 `use_llm: true` 时使用 LLM 辅助解析元件参数；照片解析复用同一 LLM 配置并返回可核对的多条结果。新增平台时应遵循现有 parser 接口/注册方式，并在启动入口注册。
 
 ## 前端结构
 
@@ -86,7 +86,7 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 - `web/src/pages/` 存放业务页面：仪表盘、元件管理、预入库、分类管理、库存日志。供应商当前不设独立页面，在元件/预入库表单内输入/选择并自动创建。库存日志页支持显示总数和切换每页条数。仪表盘（`Dashboard.tsx`）通过 `GET /stats` 展示元件/分类/库存概览、库存总价值，以及按时间范围（本月/本季/全部）筛选的累计入库金额、入库数量、出库数量。
 - `web/src/pages/Components.tsx` 是元件管理主页面，负责元件列表、分字段搜索（编号、名称、厂家型号、制造商、参数、供应商、料号）、分类筛选（可输入下拉）、元件编号录入/展示、厂家型号录入/展示、一键为未编号元件自动补号、供应商输入/自动创建、供应商料号录入、封装/位置/供应商历史下拉选项、平台编码导入、解析结果分类填充、可选 AI 解析（平台编码与扫码共用）、二维码录入、图片上传、拍摄和图片 URL 查看/编辑、补录价格（`POST /components/:id/backfill-price`）和库存变更入口。移动端（`< md`）搜索筛选区默认折叠，由 `CollapsibleFilterPanel` 提供折叠头、条件数量 badge 与快捷搜索；搜索成功后自动收起以展示列表。列表中系统编号、厂家型号、供应商料号支持点击复制到剪贴板；列表操作列使用 `RowActionsMenu` 行级悬浮菜单（⋮ 始终可见，操作列 sticky 右固定，横向滚动时不丢失；点击在触发按钮左侧单行横向展开编辑/库存/补录价格/记录/复制/删除，激活行内容 blur，点外部或 Esc 关闭），其中「复制」可将元件资料以新增表单提交副本，副本清空元件编号、库存和参考单价，由后端自动生成新编号。搜索区中制造商、供应商、分类为可输入下拉，选项分别来自 `GET /components/options` 的 `manufacturers`、`GET /suppliers` 和 `GET /categories`，输入时动态过滤匹配。新增元件时可输入采购总价（元），前端换算为分提交并按库存数量展示分摊单价（微元格式化）；库存数量、补录价格采购数量和库存变更数量支持 5、10、20、50、100 快捷选择；入库弹窗同样支持总价录入，出库时展示参考单价与预估成本。列表支持显示总数、切换每页条数、选择排序字段与方向（`localStorage` 键 `hamster-components-sort` 持久化；清空筛选不重置排序）、多选元件并批量修改存放位置（批量位置弹窗同样支持历史位置下拉），以及批量出库（页面顶部按钮或勾选栏入口；`BatchStockOutModal` 支持搜索添加/删除行、逐行填写出库数量与统一备注，调用 `POST /components/batch-stock-out` 一键提交）。列表支持「列设置」：勾选显示列、自定义表头名称与列顺序（`localStorage` 键 `hamster-components-table-columns`，与导出列配置、排序配置独立；勾选框、图片、操作列固定）。支持按当前筛选条件导出 CSV，导出前可在弹窗中勾选列、自定义表头名称与列顺序（`localStorage` 键 `hamster-components-export-columns`）。
 - `web/src/pages/PreStocks.tsx` 是预入库页面，负责待入库记录列表、状态筛选、分页、新建/编辑预入库、平台编码解析、二维码解析、分类/供应商输入并自动创建、采购总价分摊预览、图片缩略图/预览、确认入库和删除待入库记录。待入库行操作列同样使用 `RowActionsMenu`（sticky 右列、⋮ 常显、操作单行横向展开：编辑/确认入库/删除）；已入库行显示关联元件 ID 文字。移动端状态筛选区同样使用 `CollapsibleFilterPanel` 折叠，折叠头展示当前状态摘要。预计数量支持加减步进与 5、10、20、50、100 快捷选择。预入库保存时自动生成 `HB-xxxxxx` 编号但不进入正式库存；确认入库后转为正式元件并写库存流水。
-- `web/src/components/Layout.tsx` 提供页面布局，桌面端侧边栏 fixed 定位于视口（主内容区通过 `margin-left` 避让），支持收起为图标栏（`localStorage` 键 `hamster-sidebar-collapsed` 持久化）；鉴权启用且已登录时显示退出登录按钮。`BatchStockOutModal.tsx` 提供批量出库弹窗（搜索添加元件、行列表展示供应商与供应商料号、逐行数量与成本预览、失败行高亮）。`QRScanner.tsx` 和 `CameraCapture.tsx` 处理扫码和拍照相关交互，由元件管理页按需懒加载（扫码时才加载 `html5-qrcode`）。
+- `web/src/components/Layout.tsx` 提供页面布局，桌面端侧边栏 fixed 定位于视口（主内容区通过 `margin-left` 避让），支持收起为图标栏（`localStorage` 键 `hamster-sidebar-collapsed` 持久化）；鉴权启用且已登录时显示退出登录按钮。`BatchStockOutModal.tsx` 提供批量出库弹窗（搜索添加元件、行列表展示供应商与供应商料号、逐行数量与成本预览、失败行高亮）。`QRScanner.tsx`、`CameraCapture.tsx` 和 `PhotoParseModal.tsx` 处理扫码、普通拍照与拍照 AI 解析；照片解析弹窗支持核对结果、数量校验，新增可多选，编辑使用单选。
 - `web/src/components/ui/` 存放基础 UI 组件。`PageHeader` 统一页面标题与操作按钮区（移动端 `flex-wrap` 换行）；`CollapsibleFilterPanel` 在 `< md` 时默认折叠筛选内容，桌面端始终展开，可通过 ref 调用 `collapse()` 收起；`RowActionsMenu` 提供表格行级悬浮操作菜单（⋮ 始终可见、sticky 右列；展开后 icon 按钮单行横向排列，外部点击/Esc 关闭）。新增通用控件时优先复用这里的组件风格。
 - `web/src/types/index.ts` 存放前端共享类型。后端模型字段变化时，应同步检查这里和调用 API 的页面。
 - `web/src/utils/price.ts` 与后端 `internal/price` 对应：总价用分（`yuanToCents`、`formatCents`），单价用微元（`formatMicro`、`calcUnitPriceMicro`、`calcOutboundCostCents`）。修改金额规则时需同步前后端两处。
@@ -189,6 +189,7 @@ docker compose down
   - `/api/v1/components/export`
   - `/api/v1/components/batch-location`
   - `/api/v1/components/batch-stock-out`
+  - `/api/v1/components/batch`
   - `/api/v1/components/generate-numbers`
   - `/api/v1/components/:id/stock`
   - `/api/v1/components/:id/backfill-price`
@@ -196,10 +197,11 @@ docker compose down
   - `/api/v1/components/:id/image`
   - `/api/v1/components/parse`
   - `/api/v1/components/parse-qrcode`
+  - `/api/v1/pre-stocks/batch`
   - `/api/v1/stock-logs`
   - `/api/v1/stock-logs/:id/revoke`
   - `/api/v1/stats`
-  - `/api/v1/tasks`（POST 入队、GET 分页筛选），`/:id`（GET），`/:id/cancel`、`/:id/retry`（POST）
+  - `/api/v1/tasks`（POST 入队、GET 分页筛选），`/image`（照片 multipart 入队），`/:id`（GET），`/:id/image`（GET 原图），`/:id/cancel`、`/:id/retry`（POST）
   - `/api/v1/platforms`
 - 默认数据库类型是 `sqlite`，由 `DB_DRIVER` 覆盖；支持 `sqlite`、`mysql`、`postgres`（`postgresql` 会按 `postgres` 处理）。
 - `DB_DSN` 是数据库连接串：MySQL/PostgreSQL 必填；SQLite 可选，设置后优先于 `DB_PATH`。
@@ -246,12 +248,16 @@ docker compose down
 - `internal/models/task.go` 定义 `Task` 和跨数据库 `JSONText`（数据库 `text`，API JSON 对象）。`tasks` 表保存类型、原输入、来源页面、可选编辑记录 ID、状态、结果、错误及分类、重试来源 ID 和创建/开始/结束时间；不保存模型配置或密钥。任务不会直接修改元件或预入库。
 - `internal/repository/task_repo.go` 负责分页筛选、按创建时间/ID 领取、条件终态更新和中断恢复。状态为 `queued → running → succeeded/failed/cancelled`；排队也可直接取消。领取和终态更新均有状态条件，取消后成功结果不能覆盖终态。
 - `internal/tasks/service.go` 提供通用队列和首批 `component_parse`、`qrcode_parse` 执行器，复用 `ParserManager`。入队前只验证类型、来源、编码/二维码和必要模型配置，网络抓取和 AI 请求由 worker 执行。取消先写数据库，再取消执行上下文；panic 转失败，worker 继续工作。重试仅允许失败/取消任务，复制输入创建新记录并保存 `retry_of_id`。
+- `internal/tasks/images.go` 提供 `image_parse` 任务的 JPEG/PNG 校验与 `IMAGE_DIR/task-inputs` 私有照片存储；任务输入只保存照片引用，不把 Base64 写入数据库。照片任务复用 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，模型需支持图片输入，结果为可人工核对的 `items` 数组。
 - `TASK_WORKERS` 默认 `2`，`TASK_TIMEOUT_SECONDS` 默认 `120`，从领取开始执行计时；非正整数或无效值使用默认值。抓取仍限 30 秒，模型请求仍限 90 秒，二者同时接收任务上下文以终止实际 HTTP 请求。
 - `cmd/server/main.go` 启动 worker 前把遗留 `running` 标记失败（`interrupted`，服务中断），保留 `queued`。SIGINT/SIGTERM 时停止领取并取消执行，记录运行任务中断，再关闭 HTTP 服务。仅支持单服务实例；不引入 Redis，不自动重试，不删除或清理历史。
-- 所有 `/api/v1/tasks` 接口使用现有鉴权。POST 请求：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`（可选 `record_id`）；二维码任务使用 `type:"qrcode_parse"` 与 `input.qrcode_data`。来源可省略或为 `components`/`pre-stocks`，编辑记录 ID 需有有效来源。POST 入队与重试返回 `202 {data:Task}`；GET 列表支持 `status`、`type`、`page`、`page_size`（1–100），返回 `{data,pagination}`；非法状态操作返回 409。结果固定包含 `component`，扫码另有 `quantity`、`qrcode_info`；详情含原输入和可展示错误。
+- 所有 `/api/v1/tasks` 接口使用现有鉴权。POST 请求：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`（可选 `record_id`）；二维码任务使用 `type:"qrcode_parse"` 与 `input.qrcode_data`；照片使用 `POST /api/v1/tasks/image` multipart 字段 `image`、`source`、可选 `record_id`，返回 `202 {data:Task}`。照片限制 JPEG/PNG、10 MiB、4000 万像素，结果为 `items`。来源可省略或为 `components`/`pre-stocks`，编辑记录 ID 需有有效来源。GET 列表支持 `status`、`type`、`page`、`page_size`（1–100），返回 `{data,pagination}`；非法状态操作返回 409。详情含原输入和可展示错误。
+- `POST /api/v1/components/batch` 与 `POST /api/v1/pre-stocks/batch` 接收 `{ "items": [...] }`，最多 100 条；每条需要名称、分类和显式填写的非负整数数量（元件 `stock_quantity`、预入库 `expected_quantity`）；缺失、`null`、负数或小数返回 400，明确填写的 0 合法。分类/供应商可按名称自动匹配或创建。成功返回 `201 {data:[...]}`，顺序与请求条目一致。整个批量操作使用单事务，任一条失败连同分类、供应商和库存流水全部回滚；元件入库价格和库存流水遵循普通创建规则，无数据库迁移。
 - 旧 `/components/parse` 和 `/components/parse-qrcode` 继续同步返回原有结构，复用相同解析器并传递 HTTP 请求上下文。
 - `web/src/context/TaskContext.tsx` 在受保护布局内维护共享任务状态，每 2 秒轮询跟踪中的任务。会话存储 `hamster-pending-tasks` 保存未完成 ID；刷新时分页恢复数据库排队/运行任务，并查询原跟踪 ID，历史完成任务不重复通知。退出登录卸载 Provider，终止轮询。
-- `/tasks`（`pages/Tasks.tsx`）是任务中心，提供分页、状态/类型筛选、输入/结果/错误详情、取消、重试、应用结果。侧边栏有入口。SPA fallback 直接返回嵌入的 `web/dist/index.html`，刷新任务/恢复链接不会丢失路径和查询参数；构建产物不提交。
-- `hooks/useParseTask.ts` 隔离表单会话，`utils/parseResult.ts` 按提交快照逐字段合并非空解析值；手动修改保留。关闭、保存、重新打开或复制表单使旧任务失去自动回填资格，任务仍继续。`components/ParseTaskStatus.tsx` 显示任务编号和状态，解析不阻塞编辑/关闭/保存，仅禁用同一会话内重复提交。
-- `hooks/useTaskApplication.ts` 消费业务页 `?applyTask=<id>` 恢复链接；先取任务，再重新读取编辑记录后回填。目标删除或预入库已确认时询问是否用于新增表单。只恢复解析结果，不恢复完整未保存草稿；编号、分类、供应商、数量沿用原映射，业务保存需用户确认。
-- 测试：`go test ./...`，`go test -race ./internal/tasks ./internal/repository`；任务测试使用本地解析器/临时数据库，解析器测试使用本地 HTTP 与模型响应，无需访问真实商品页。修改 Go 后先执行 `go fix ./...`、`go fmt ./...` 再测试；前端执行 `npm run lint`、`npm run build`（在 `web/` 下）。
+- `/tasks`（`pages/Tasks.tsx`）是任务中心，提供分页、状态/类型筛选、输入/结果/错误详情、取消、重试、应用结果。元件和预入库表单的“拍照 AI”统一采用“核对结果 → 复用业务表单逐条编辑 → 一次批量保存”。核对时新增可多选，编辑已有记录使用单选并可直接切换任意结果；未知数量必须手动补齐，显式 0 会保留。侧边栏有入口。SPA fallback 直接返回嵌入的 `web/dist/index.html`，刷新任务/恢复链接不会丢失路径和查询参数；构建产物不提交。
+- `hooks/usePhotoDrafts.ts` 保存独立的完整表单草稿，`components/PhotoDraftNavigation.tsx` 提供条目切换与进度提示；切换和提交前合并当前编辑值，包含分类、供应商、数量、价格、位置、编号和图片。校验失败定位条目，请求失败保留全部草稿并恢复保存状态；元件创建成功后按响应顺序上传各条图片，图片失败提示对应条目但不撤销已保存元件。预入库图片沿用 URL 字段。`utils/photoResult.ts` 显式转换照片字段，正确映射供应商料号；`types/index.ts` 区分原始 `ParsedImageItem`（数量可为 `null`）与已核对 `ReviewedImageItem`（数量为整数），`TaskResult.component` 为可选。
+- `components/PhotoParseModal.tsx` 每次打开/切换目标创建独立会话；提交/解析期间可关闭，确认或关闭会卸载弹窗并释放摄像头，重新打开默认显示拍摄/选图入口。共享任务上下文继续跟踪后台任务，会话标识阻止迟到响应或旧任务回填新弹窗。
+- `hooks/useParseTask.ts` 隔离表单会话，`utils/parseResult.ts` 按提交快照逐字段合并非空解析值；手动修改保留。关闭、保存、重新打开、复制表单或切换照片草稿使旧编码/二维码任务失去自动回填资格，任务仍继续。`components/ParseTaskStatus.tsx` 显示任务编号和状态，解析不阻塞编辑/关闭/保存，仅禁用同一会话内重复提交。
+- `hooks/useTaskApplication.ts` 消费业务页 `?applyTask=<id>` 恢复链接；先取任务，再重新读取编辑记录；照片任务先进入同一核对弹窗，确认后才填入业务表单。目标删除或预入库已确认时询问是否用于新增表单。只恢复解析结果，不恢复完整未保存草稿，业务保存需用户确认。
+- 测试：`go test ./...`，`go test -race ./internal/tasks ./internal/repository`；`internal/handlers/batch_handler_test.go` 覆盖数量边界、完整字段/价格、跨表编号和事务回滚；任务测试使用本地解析器/临时数据库，解析器测试使用本地 HTTP 与模型响应，无需访问真实商品页。修改 Go 后先执行 `go fix ./...`、`go fmt ./...` 再测试；前端执行 `npm run lint`、`npm run build`（在 `web/` 下）。

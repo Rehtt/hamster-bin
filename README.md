@@ -20,9 +20,9 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 - 价格管理：入库总价按数量分摊为单价，元件参考单价按库存加权平均更新。
 - 数据导出：按当前筛选条件导出 CSV，并支持自定义导出列和表头。
 - 平台解析：支持立创商城/LCSC 编码解析，二维码解析可提取平台编码和数量。
-- 持久化后台解析：元件与预入库的编码、二维码和 AI 解析提交后立即返回任务编号，可继续编辑或关闭表单。任务中心支持结果恢复、失败重试和取消，跨页面显示完成提示；结果需确认保存后才写入业务数据。
+- 持久化后台解析：元件与预入库的编码、二维码和照片 AI 解析提交后立即返回任务编号，可继续编辑或关闭表单。照片支持 JPEG/PNG 拍摄或选图、识别多条元件，核对后在完整表单中逐条切换编辑并一次批量保存（未知数量需补齐，0 合法）；任务中心支持结果恢复、失败重试和取消，跨页面显示完成提示；结果需确认保存后才写入业务数据。
 - 可选 AI 辅助解析：配置 OpenAI-compatible API 后，可辅助解析元件参数。
-- 图片与资料：支持元件图片上传、Datasheet 链接和描述信息。
+- 图片与资料：支持元件图片上传、拍照 AI 解析、Datasheet 链接和描述信息。
 - 可选登录鉴权：通过环境变量启用单管理员登录，使用 HttpOnly Cookie 保存 JWT。
 - 单文件部署：生产构建可将 React 前端嵌入 Go 二进制，便于在内网或个人服务器运行。
 
@@ -270,12 +270,12 @@ go test . ./cmd/... ./internal/...
 - `/api/v1/components`：元件列表、创建、更新、删除、导出和库存操作。
 - `/api/v1/stock-logs`：库存流水查询与撤销。
 - `/api/v1/stats`：仪表盘统计数据。
-- `/api/v1/tasks`：后台任务提交（POST，返回 202）、分页查询（GET，支持 `status`、`type`）；`/:id` 查询详情，`/:id/cancel` 取消，`/:id/retry` 新建重试任务（POST，返回 202）。
+- `/api/v1/tasks`：后台任务提交（POST，返回 202）、照片 multipart 提交（`/image`）、分页查询（GET，支持 `status`、`type`）；`/:id` 查询详情，`/:id/image` 获取任务照片，`/:id/cancel` 取消，`/:id/retry` 新建重试任务（POST，返回 202）。
 - `/api/v1/platforms`：可用解析平台。
 
-任务提交示例：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`。扫码使用 `qrcode_parse` 和 `input.qrcode_data`；`source` 可为 `components` 或 `pre-stocks`，编辑记录可带 `record_id`。旧 `/components/parse`、`/components/parse-qrcode` 仍保持同步接口。
+任务提交示例：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`。扫码使用 `qrcode_parse` 和 `input.qrcode_data`；照片使用 `/api/v1/tasks/image` 上传 JPEG/PNG（不超过 10 MiB），复用 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，模型需支持图片输入；`source` 可为 `components` 或 `pre-stocks`，编辑记录可带 `record_id`。旧 `/components/parse`、`/components/parse-qrcode` 仍保持同步接口。
 
-任务与业务数据使用同一数据库，服务重启后继续处理排队任务，运行中任务标记为“服务中断”并允许手动重试。当前按单服务实例运行，不支持多实例调度，不自动重试、删除或清理历史。任务中心“应用结果”会重新读取最新编辑记录；记录已删除或预入库已确认时，可选择作为新增表单使用。刷新后可取回解析结果，但不恢复未保存的完整表单草稿。
+任务与业务数据使用同一数据库，服务重启后继续处理排队任务，运行中任务标记为“服务中断”并允许手动重试。当前按单服务实例运行，不支持多实例调度，不自动重试、删除或清理历史。照片核对弹窗在提交或解析期间均可关闭，任务继续后台执行，重新打开从拍摄/选图开始。任务中心“应用结果”会重新读取最新编辑记录，照片结果先进入核对弹窗，确认后才填入表单；记录已删除或预入库已确认时，可选择作为新增表单使用。刷新后可取回解析结果，但不恢复未保存的完整表单草稿。
 
 ## 数据与文件
 
