@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,11 @@ import (
 )
 
 func testService(t *testing.T, workers int, timeout time.Duration) *Service {
+	t.Helper()
+	s, _ := testServiceWithDB(t, workers, timeout)
+	return s
+}
+func testServiceWithDB(t *testing.T, workers int, timeout time.Duration) (*Service, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tasks.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
@@ -38,7 +44,7 @@ func testService(t *testing.T, workers int, timeout time.Duration) *Service {
 	manager.Register(parser.NewLCSCParser())
 	s := New(repository.NewTaskRepository(db), manager, workers, timeout)
 	t.Cleanup(s.Stop)
-	return s
+	return s, db
 }
 func request() Request {
 	return Request{Type: ComponentParse, Input: Input{Code: "123456789012"}, Source: "components"}
@@ -74,6 +80,92 @@ func start(t *testing.T, s *Service) {
 		t.Fatal(err)
 	}
 }
+
+func observeEmptyClaims(t *testing.T, db *gorm.DB) <-chan struct{} {
+	t.Helper()
+	empty := make(chan struct{}, 100)
+	if err := db.Callback().Query().After("gorm:query").Register("test:empty_claim", func(tx *gorm.DB) {
+		if tx.Error == nil && tx.RowsAffected == 0 && strings.Contains(tx.Statement.SQL.String(), "ORDER BY created_at ASC, id ASC LIMIT 1") {
+			empty <- struct{}{}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return empty
+}
+
+func TestIdleWorkersWaitAndWakeOnSubmit(t *testing.T) {
+	s, db := testServiceWithDB(t, 2, 5*time.Second)
+	empty := observeEmptyClaims(t, db)
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	s.execute = func(ctx context.Context, _ string, _ Input) (*Result, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+			return &Result{}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	start(t, s)
+	for range 2 {
+		select {
+		case <-empty:
+		case <-time.After(time.Second):
+			t.Fatal("worker did not check queue on startup")
+		}
+	}
+	select {
+	case <-empty:
+		t.Fatal("idle worker kept polling the empty queue")
+	case <-time.After(500 * time.Millisecond):
+	}
+	first, second := submit(t, s), submit(t, s)
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("submission did not promptly wake both workers")
+		}
+	}
+	close(release)
+	waitTask(t, s, first.ID, repository.TaskSucceeded)
+	waitTask(t, s, second.ID, repository.TaskSucceeded)
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown waited for the idle polling interval")
+	}
+}
+
+func TestIdleWorkersFallbackPoll(t *testing.T) {
+	s, db := testServiceWithDB(t, 1, time.Second)
+	s.pollInterval = 50 * time.Millisecond
+	empty := observeEmptyClaims(t, db)
+	s.execute = func(context.Context, string, Input) (*Result, error) {
+		return &Result{}, nil
+	}
+	start(t, s)
+	select {
+	case <-empty:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not check queue on startup")
+	}
+	// 模拟没有经过 Service.Submit 的持久化任务，没有进程内通知。
+	input, err := json.Marshal(request().Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &models.Task{Type: ComponentParse, Input: models.JSONText(input), Status: repository.TaskQueued}
+	if err := s.Repo.Create(task); err != nil {
+		t.Fatal(err)
+	}
+	waitTask(t, s, task.ID, repository.TaskSucceeded)
+}
+
 func TestQueuePersistenceConcurrencyAndClaimOnce(t *testing.T) {
 	s := testService(t, 2, time.Second)
 	var active, max atomic.Int32

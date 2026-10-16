@@ -51,18 +51,20 @@ type Result struct {
 // Executor 可替换为本地测试解析器；生产中只调用共享 ParserManager。
 type Executor func(context.Context, string, Input) (*Result, error)
 type Service struct {
-	Repo        *repository.TaskRepository
-	manager     *parser.ParserManager
-	imageParser *parser.ImageParser
-	images      *ImageStore
-	execute     Executor
-	workers     int
-	timeout     time.Duration
-	mu          sync.Mutex // 领取/注册上下文与取消串行化，消除取消早于注册的竞态。
-	running     map[uint]context.CancelFunc
-	ctx         context.Context
-	stop        context.CancelFunc
-	wg          sync.WaitGroup
+	Repo         *repository.TaskRepository
+	manager      *parser.ParserManager
+	imageParser  *parser.ImageParser
+	images       *ImageStore
+	execute      Executor
+	workers      int
+	timeout      time.Duration
+	pollInterval time.Duration
+	mu           sync.Mutex // 领取/注册上下文与取消串行化，消除取消早于注册的竞态。
+	wake         chan struct{}
+	running      map[uint]context.CancelFunc
+	ctx          context.Context
+	stop         context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 func New(repo *repository.TaskRepository, manager *parser.ParserManager, workers int, timeout time.Duration, options ...func(*Service)) *Service {
@@ -72,7 +74,7 @@ func New(repo *repository.TaskRepository, manager *parser.ParserManager, workers
 	if timeout <= 0 {
 		timeout = 120 * time.Second
 	}
-	s := &Service{Repo: repo, manager: manager, workers: workers, timeout: timeout, running: make(map[uint]context.CancelFunc)}
+	s := &Service{Repo: repo, manager: manager, workers: workers, timeout: timeout, pollInterval: 30 * time.Second, wake: make(chan struct{}), running: make(map[uint]context.CancelFunc)}
 	for _, option := range options {
 		option(s)
 	}
@@ -130,6 +132,11 @@ func (s *Service) Submit(req Request, retryOf *uint) (*models.Task, error) {
 	if err := s.Repo.Create(t); err != nil {
 		return nil, err
 	}
+	// 入库成功后广播唤醒，照片和重试任务也复用此入口。
+	s.mu.Lock()
+	close(s.wake)
+	s.wake = make(chan struct{})
+	s.mu.Unlock()
 	return t, nil
 }
 func (s *Service) Retry(id uint) (*models.Task, error) {
@@ -178,14 +185,14 @@ func (s *Service) Stop() {
 }
 func (s *Service) worker() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
 	for {
 		s.mu.Lock()
 		if s.ctx.Err() != nil {
 			s.mu.Unlock()
 			return
 		}
+		// 领取前订阅通知，避免任务恰在空查询与等待之间入队时丢失唤醒。
+		wake := s.wake
 		t, err := s.Repo.Claim()
 		if err == nil {
 			ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
@@ -202,11 +209,16 @@ func (s *Service) worker() {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("领取任务失败: %v", err)
 		}
+		// 兜底轮询用于发现通知以外的入队或数据库故障恢复。
+		timer := time.NewTimer(s.pollInterval)
 		select {
 		case <-s.ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-wake:
+		case <-timer.C:
 		}
+		timer.Stop()
 	}
 }
 func (s *Service) invoke(ctx context.Context, t *models.Task) (result *Result, err error) {
