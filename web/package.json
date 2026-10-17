@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:auth": "node scripts/test-auth.mjs",
+    "test:parser": "node scripts/test-parser.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

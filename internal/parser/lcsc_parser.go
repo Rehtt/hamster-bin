@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -59,22 +58,73 @@ func (p *LCSCParser) Parse(code string) (*ComponentInfo, error) {
 }
 
 func (p *LCSCParser) ParseWithOptions(code string, options ParseOptions) (*ComponentInfo, error) {
-	code = strings.TrimSpace(code)
-	code = strings.ToUpper(code) // 统一转为大写
-
-	return p.parseByAPI(code, options)
+	if err := options.ValidateMode(); err != nil {
+		return nil, err
+	}
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if !p.CanParse(code) {
+		return nil, ErrNoParserMatched
+	}
+	trace := options.Trace
+	if trace == nil {
+		trace = &ParseTrace{}
+	}
+	*trace = ParseTrace{Mode: options.Mode(), Calls: []ParseCall{}}
+	options.Trace = trace
+	options.Context = context.WithValue(options.ExecutionContext(), traceKey{}, trace)
+	if err := options.Context.Err(); err != nil {
+		return nil, err
+	}
+	executor := p.newAgentExecutor(code)
+	if options.Mode() == "agent" {
+		return p.parseAgent(options.Context, code, trace, executor)
+	}
+	options.UseLLM = options.Mode() == "llm"
+	return p.parseStandard(code, options, executor)
 }
 
-// parseByAPI 通过 API 解析
 func (p *LCSCParser) parseByAPI(code string, options ...ParseOptions) (*ComponentInfo, error) {
-	parseOptions := ParseOptions{}
+	opts := ParseOptions{}
 	if len(options) > 0 {
-		parseOptions = options[0]
+		opts = options[0]
 	}
-	if parseOptions.UseLLM && (p.llm == nil || !p.llm.Configured()) {
+	return p.ParseWithOptions(code, opts)
+}
+func (p *LCSCParser) parseStandard(code string, options ParseOptions, executor *agentExecutor) (*ComponentInfo, error) {
+	if options.UseLLM && (p.llm == nil || !p.llm.Configured()) {
 		return nil, llm.ErrNotConfigured
 	}
+	var reasons []string
+	for _, tool := range executor.tools {
+		info, params, err := executor.query(options.ExecutionContext(), tool)
+		if options.ExecutionContext().Err() != nil {
+			return nil, options.ExecutionContext().Err()
+		}
+		if err != nil {
+			reasons = append(reasons, err.Error())
+			continue
+		}
+		options.Trace.FinalSource = tool.name
+		if options.UseLLM {
+			if err := p.enrichWithLLM(options.ExecutionContext(), info, params); err != nil {
+				return nil, err
+			}
+		}
+		return info, nil
+	}
+	endpoint := fmt.Sprintf("https://www.jlc-smt.com/lcsc/detail/%s.html", code)
+	info, _, err := recordQuery(options.ExecutionContext(), "lcsc_html", code, endpoint, false, func() (*ComponentInfo, string, error) {
+		info, err := p.parseByHTML(code, options)
+		return info, "", err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("详情 API 失败: %s；HTML 解析失败: %w", strings.Join(reasons, "；"), err)
+	}
+	options.Trace.FinalSource = "lcsc_html"
+	return info, nil
+}
 
+func (p *LCSCParser) parseByHTML(code string, parseOptions ParseOptions) (*ComponentInfo, error) {
 	url := fmt.Sprintf("https://www.jlc-smt.com/lcsc/detail/%s.html", code)
 	doc, pageText, err := p.fetchDetailDocumentContext(parseOptions.ExecutionContext(), url)
 	if err != nil {
@@ -127,7 +177,7 @@ func (p *LCSCParser) fetchDetailDocumentContext(ctx context.Context, url string)
 		return nil, "", fmt.Errorf("HTTP 状态码: %d: %w", resp.StatusCode, ErrParserUpstream)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	body, err := readLCSCResponse(resp.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("读取响应失败: %w: %w", err, ErrParserUpstream)
 	}
@@ -221,7 +271,10 @@ func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*Componen
 }
 
 func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pageText string) error {
-	initial, _ := json.Marshal(info)
+	// 报价和库存不交给模型处理。
+	initialInfo := *info
+	initialInfo.SupplierQuote = nil
+	initial, _ := json.Marshal(initialInfo)
 	result, err := p.llm.CompleteJSON(ctx, []llm.Message{
 		{
 			Role:    "system",
@@ -229,7 +282,7 @@ func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pag
 		},
 		{
 			Role: "user",
-			Content: fmt.Sprintf(`请从嘉立创/LCSC 商品页面文本中解析电子元件信息。
+			Content: fmt.Sprintf(`请从嘉立创/LCSC 商品资料中解析电子元件信息。
 
 输出 JSON object，只允许包含这些字段：
 name, category_name, model, value, package, description, manufacturer, datasheet_url, image_url
@@ -243,10 +296,10 @@ name, category_name, model, value, package, description, manufacturer, datasheet
 - description 用简短中文汇总其它重要参数。
 - 无法确定的字段输出空字符串。
 
-当前 DOM 初步解析结果：
+当前初步解析结果：
 %s
 
-页面文本：
+结构化参数或页面文本：
 %s`, string(initial), pageText),
 		},
 	})
@@ -254,6 +307,10 @@ name, category_name, model, value, package, description, manufacturer, datasheet
 		return fmt.Errorf("LLM 请求失败: %w: %w", err, ErrParserUpstream)
 	}
 
+	return applyLLMFields(info, result)
+}
+
+func applyLLMFields(info *ComponentInfo, result string) error {
 	var parsed struct {
 		Name         string `json:"name"`
 		CategoryName string `json:"category_name"`
@@ -294,7 +351,7 @@ func normalizeWhitespace(value string) string {
 }
 
 func (p *LCSCParser) ValidateOptions(options ParseOptions) error {
-	if options.UseLLM && (p.llm == nil || !p.llm.Configured()) {
+	if options.Mode() == "llm" && (p.llm == nil || !p.llm.Configured()) {
 		return llm.ErrNotConfigured
 	}
 	return nil

@@ -18,7 +18,7 @@ func (f localTransport) RoundTrip(r *http.Request) (*http.Response, error) { ret
 func localParser(server *httptest.Server, completer ...JSONCompleter) *LCSCParser {
 	p := NewLCSCParser(completer...)
 	p.client.Transport = localTransport(func(r *http.Request) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(r.Context(), r.Method, server.URL, r.Body)
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, server.URL+r.URL.RequestURI(), r.Body)
 		if err != nil {
 			return nil, err
 		}

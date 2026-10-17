@@ -21,14 +21,16 @@ func NewParserHandler(manager *parser.ParserManager) *ParserHandler {
 
 // ParseRequest 解析请求
 type ParseRequest struct {
-	Code   string `json:"code" binding:"required"` // 平台编码
-	UseLLM bool   `json:"use_llm"`                 // 是否使用 LLM 辅助解析
+	Code      string `json:"code" binding:"required"` // 平台编码
+	ParseMode string `json:"parse_mode"`
+	UseLLM    bool   `json:"use_llm"` // 是否使用 LLM 辅助解析
 }
 
 // QRCodeParseRequest 二维码解析请求
 type QRCodeParseRequest struct {
 	QRCodeData string `json:"qrcode_data" binding:"required"` // 二维码原始数据
-	UseLLM     bool   `json:"use_llm"`                        // 是否使用 LLM 辅助解析
+	ParseMode  string `json:"parse_mode"`
+	UseLLM     bool   `json:"use_llm"` // 是否使用 LLM 辅助解析
 }
 
 // parseErrorResponse 将解析错误映射为 HTTP 状态码和错误消息
@@ -36,6 +38,8 @@ func parseErrorResponse(err error) (int, string) {
 	switch {
 	case errors.Is(err, parser.ErrNoParsersAvailable):
 		return http.StatusServiceUnavailable, "解析服务不可用"
+	case errors.Is(err, parser.ErrInvalidParseMode):
+		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, parser.ErrNoParserMatched):
 		return http.StatusBadRequest, "无法识别的平台编码格式，请检查编码是否正确"
 	case errors.Is(err, llm.ErrNotConfigured):
@@ -59,16 +63,18 @@ func (h *ParserHandler) ParseComponent(c *gin.Context) {
 	}
 
 	// 调用解析器
-	info, err := h.manager.ParseWithOptions(req.Code, parser.ParseOptions{UseLLM: req.UseLLM, Context: c.Request.Context()})
+	trace := &parser.ParseTrace{}
+	info, err := h.manager.ParseWithOptions(req.Code, parser.ParseOptions{ParseMode: req.ParseMode, Trace: trace, UseLLM: req.UseLLM, Context: c.Request.Context()})
 	if err != nil {
 		status, message := parseErrorResponse(err)
-		c.JSON(status, gin.H{"error": message})
+		c.JSON(status, gin.H{"error": message, "parse_trace": trace})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data":    info,
-		"message": "解析成功",
+		"data":        info,
+		"message":     "解析成功",
+		"parse_trace": trace,
 	})
 }
 
@@ -99,11 +105,13 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 	}
 
 	// 使用提取的编码调用解析器获取元件信息
-	info, err := h.manager.ParseWithOptions(qrData.Code, parser.ParseOptions{UseLLM: req.UseLLM, Context: c.Request.Context()})
+	trace := &parser.ParseTrace{}
+	info, err := h.manager.ParseWithOptions(qrData.Code, parser.ParseOptions{ParseMode: req.ParseMode, Trace: trace, UseLLM: req.UseLLM, Context: c.Request.Context()})
 	if err != nil {
 		status, message := parseErrorResponse(err)
 		c.JSON(status, gin.H{
 			"error":       message,
+			"parse_trace": trace,
 			"qrcode_data": qrData,
 		})
 		return
@@ -116,6 +124,7 @@ func (h *ParserHandler) ParseQRCode(c *gin.Context) {
 			"quantity":    qrData.Quantity,
 			"qrcode_info": qrData,
 		},
-		"message": "解析成功",
+		"message":     "解析成功",
+		"parse_trace": trace,
 	})
 }

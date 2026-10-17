@@ -49,3 +49,38 @@ func TestClientCompleteJSONNotConfigured(t *testing.T) {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
 }
+
+func TestClientToolsRoundTrip(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var req chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+		}
+		if len(req.Tools) != 1 || req.Tools[0].Function.Name != "lookup" || req.ResponseFormat != nil {
+			t.Error("tool declaration", req)
+		}
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"code\":\"C123\"}"}}]}}]}`))
+		} else {
+			if len(req.Messages) != 3 || len(req.Messages[1].ToolCalls) != 1 || req.Messages[1].ToolCalls[0].ID != "call_1" || req.Messages[2].ToolCallID != "call_1" || req.Messages[2].Role != "tool" {
+				t.Error("tool round trip", req.Messages)
+			}
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
+		}
+	}))
+	defer server.Close()
+	c := NewClient(server.URL, "key", "model")
+	tools := []Tool{{Type: "function", Function: FunctionDefinition{Name: "lookup", Description: "lookup product", Parameters: map[string]any{"type": "object"}}}}
+	messages := []Message{{Role: "user", Content: "C123"}}
+	msg, err := c.CompleteTools(context.Background(), messages, tools)
+	if err != nil || len(msg.ToolCalls) != 1 {
+		t.Fatal(msg, err)
+	}
+	messages = append(messages, msg, Message{Role: "tool", ToolCallID: msg.ToolCalls[0].ID, Content: `{"name":"resistor"}`})
+	msg, err = c.CompleteTools(context.Background(), messages, tools)
+	if err != nil || msg.Content != "done" || calls != 2 {
+		t.Fatal(msg, err, calls)
+	}
+}

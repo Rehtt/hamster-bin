@@ -23,9 +23,11 @@ type Client struct {
 }
 
 type Message struct {
-	Role    string        `json:"role"`
-	Content string        `json:"content"`
-	Parts   []ContentPart `json:"-"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content"`
+	Parts      []ContentPart `json:"-"`
+	ToolCalls  []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
 type ContentPart struct {
@@ -45,12 +47,35 @@ func (m Message) MarshalJSON() ([]byte, error) {
 		content = m.Parts
 	}
 	return json.Marshal(struct {
-		Role    string `json:"role"`
-		Content any    `json:"content"`
-	}{m.Role, content})
+		Role       string     `json:"role"`
+		Content    any        `json:"content"`
+		ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string     `json:"tool_call_id,omitempty"`
+	}{m.Role, content, m.ToolCalls, m.ToolCallID})
+}
+
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+type Tool struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+type FunctionDefinition struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
 }
 
 type chatRequest struct {
+	Tools []Tool `json:"tools,omitempty"`
+
 	Model          string          `json:"model"`
 	Messages       []Message       `json:"messages"`
 	Temperature    float64         `json:"temperature"`
@@ -87,55 +112,59 @@ func (c *Client) Configured() bool {
 }
 
 func (c *Client) CompleteJSON(ctx context.Context, messages []Message) (string, error) {
-	if !c.Configured() {
-		return "", ErrNotConfigured
+	message, err := c.complete(ctx, chatRequest{Model: c.model, Messages: messages, Temperature: 0, ResponseFormat: &responseFormat{Type: "json_object"}})
+	if err == nil && strings.TrimSpace(message.Content) == "" {
+		return "", errors.New("LLM 响应为空")
 	}
+	return strings.TrimSpace(message.Content), err
+}
 
-	body, err := json.Marshal(chatRequest{
-		Model:       c.model,
-		Messages:    messages,
-		Temperature: 0,
-		ResponseFormat: &responseFormat{
-			Type: "json_object",
-		},
-	})
+func (c *Client) CompleteTools(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
+	return c.complete(ctx, chatRequest{Model: c.model, Messages: messages, Temperature: 0, Tools: tools})
+}
+
+func (c *Client) complete(ctx context.Context, request chatRequest) (Message, error) {
+	if !c.Configured() {
+		return Message{}, ErrNotConfigured
+	}
+	body, err := json.Marshal(request)
 	if err != nil {
-		return "", err
+		return Message{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return Message{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return Message{}, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return Message{}, err
 	}
 
 	var parsed chatResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("解析 LLM 响应失败: %w", err)
+		return Message{}, fmt.Errorf("解析 LLM 响应失败: %w", err)
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		if parsed.Error != nil && parsed.Error.Message != "" {
-			return "", fmt.Errorf("LLM 请求失败: %s", parsed.Error.Message)
+			return Message{}, fmt.Errorf("LLM 请求失败: %s", parsed.Error.Message)
 		}
-		return "", fmt.Errorf("LLM 请求失败，HTTP 状态码: %d", resp.StatusCode)
+		return Message{}, fmt.Errorf("LLM 请求失败，HTTP 状态码: %d", resp.StatusCode)
 	}
 
-	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
-		return "", errors.New("LLM 响应为空")
+	if len(parsed.Choices) == 0 || (strings.TrimSpace(parsed.Choices[0].Message.Content) == "" && len(parsed.Choices[0].Message.ToolCalls) == 0) {
+		return Message{}, errors.New("LLM 响应为空")
 	}
 
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+	return parsed.Choices[0].Message, nil
 }

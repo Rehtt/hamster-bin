@@ -126,7 +126,25 @@ export interface BatchStockOutResult {
   total_cost_cents: number;
 }
 
+export type ParseMode = 'standard' | 'llm' | 'agent';
+export interface ParseTrace {
+  mode: ParseMode;
+  final_source?: string;
+  fallback: boolean;
+  fallback_reason?: string;
+  calls: { tool: string; arguments: Record<string, string>; endpoint?: string; started_at: string; duration_ms: number; status: string; summary: string; cached?: boolean }[];
+}
+export interface SupplierQuote {
+  source_name?: string;
+  source_url?: string;
+  stock_quantity: number | null;
+  currency: string | null;
+  price_tiers: { min_quantity: number; unit_price: string }[];
+  queried_at: string;
+}
+
 export interface ParsedComponentInfo {
+  supplier_quote?: SupplierQuote;
   name?: string;
   category_name?: string;
   model?: string;
@@ -142,6 +160,7 @@ export interface ParsedComponentInfo {
   category?: Category;
 }
 export interface TaskResult {
+  parse_trace?: ParseTrace;
   component?: ParsedComponentInfo;
   items?: ParsedImageItem[];
   quantity?: number;
@@ -165,7 +184,7 @@ export interface ReviewedImageItem extends ParsedImageItem {
 }
 export interface TaskRequest {
   type: 'component_parse' | 'qrcode_parse' | 'image_parse';
-  input: { code?: string; qrcode_data?: string; use_llm: boolean };
+  input: { code?: string; qrcode_data?: string; use_llm?: boolean; parse_mode?: ParseMode };
   source: 'components' | 'pre-stocks';
   record_id?: number;
 }

@@ -1,7 +1,10 @@
+import { ParseModeSelect } from '../components/ParseModeSelect';
+import type { ParseMode } from '../types';
 import { useParseTask } from '../hooks/useParseTask';
 import { useTaskApplication } from '../hooks/useTaskApplication';
 import { ParseTaskStatus } from '../components/ParseTaskStatus';
-import { mergeParsed } from '../utils/parseResult';
+import { mergeParsed, parsedComponentFields, matchingSupplierReference } from '../utils/parseResult';
+import { SupplierReference } from '../components/SupplierReference';
 import { lazy, Suspense, useEffect, useState, useRef } from 'react';
 import {
   DndContext,
@@ -536,8 +539,9 @@ export default function Components() {
 
   // Platform Import
   const [platformCode, setPlatformCode] = useState('');
+  const [supplierReference, setSupplierReference] = useState<ParsedComponentInfo>();
 
-  const [useAIParse, setUseAIParse] = useState(false);
+  const [parseMode, setParseMode] = useState<ParseMode>('standard');
   const [isPhotoParseOpen, setIsPhotoParseOpen] = useState(false);
   const photoDrafts = usePhotoDrafts<PhotoDraft>();
   const [recoveredPhotoTask, setRecoveredPhotoTask] = useState<ParseTask>();
@@ -552,22 +556,14 @@ export default function Components() {
     return platformName;
   };
 
-  const parsedInfoToFormData = (info: ParsedComponentInfo): Partial<Component> => ({
-    name: info.name || info.model || '',
-    model: info.model || '',
-    manufacturer: info.manufacturer || '',
-    value: info.value || '',
-    package: info.package || '',
-    supplier_part_number: info.platform_code || '',
-    description: info.description || '',
-    datasheet_url: info.datasheet_url || '',
-    image_url: info.image_url || '',
-  });
+  const parsedInfoToFormData = parsedComponentFields;
 
-  type ParseSnapshot = { form: Partial<Component>; category: string; supplier: string; price: string; preview: string; file: File | null };
+  type ParseSnapshot = { platformCode: string; form: Partial<Component>; category: string; supplier: string; price: string; preview: string; file: File | null };
   type PhotoDraft = ParseSnapshot & { platformCode: string };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
-    const parsedForm = parsedInfoToFormData(component);
+    setSupplierReference(component);
+    setPlatformCode(prev => !snapshot || prev === snapshot.platformCode ? component.platform_code || prev : prev);
+    const parsedForm: Partial<Component> = parsedInfoToFormData(component);
     if (snapshot && selectedFile !== snapshot.file) delete parsedForm.image_url;
     if (quantity !== undefined && quantity >= 0) parsedForm.stock_quantity = quantity;
     const supplier = getSupplierNameFromPlatform(component.platform_name);
@@ -585,7 +581,7 @@ export default function Components() {
   };
   const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => { if (result.component) applyParsedComponent(result.component, result.quantity, snapshot); });
   const isImportParsing = parseTask.busy;
-  const parseSnapshot = (): ParseSnapshot => ({ form: { ...formData }, category: categoryInput, supplier: supplierInput, price: formTotalPriceYuan, preview: previewUrl, file: selectedFile });
+  const parseSnapshot = (): ParseSnapshot => ({ platformCode, form: { ...formData }, category: categoryInput, supplier: supplierInput, price: formTotalPriceYuan, preview: previewUrl, file: selectedFile });
 
   useEffect(() => {
     const checkMobile = () => {
@@ -1045,7 +1041,7 @@ export default function Components() {
 
   // Form Handlers
   const openForm = (component?: Component) => {
-    parseTask.reset();
+    parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset();
     setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     setSelectedFile(null);
@@ -1077,7 +1073,7 @@ export default function Components() {
   };
 
   const openCopyForm = (component: Component) => {
-    parseTask.reset();
+    parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset(); setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     setSelectedFile(null);
     setShowImageMenu(false);
@@ -1131,7 +1127,7 @@ export default function Components() {
 
   const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
   const loadPhotoDraft = (draft: PhotoDraft) => {
-    parseTask.reset();
+    parseTask.reset(); setSupplierReference(undefined);
     setFormData(draft.form); setCategoryInput(draft.category); setSupplierInput(draft.supplier);
     setFormTotalPriceYuan(draft.price); setSelectedFile(draft.file); setPreviewUrl(draft.preview);
     setPlatformCode(draft.platformCode); setShowImageMenu(false);
@@ -1165,7 +1161,7 @@ export default function Components() {
           catch { toast.error(`第 ${index + 1} 条 ${draft.form.name} 图片上传失败，元件已保存`); }
         }
         toast.success(`已批量添加 ${drafts.length} 个元件`);
-        photoDrafts.reset(); parseTask.reset(); setIsFormOpen(false);
+        photoDrafts.reset(); parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false);
         await Promise.all([fetchComponents(pagination.page, pagination.page_size), fetchComponentOptions(), fetchCategories(), fetchSuppliers()]);
         return;
       }
@@ -1254,7 +1250,7 @@ export default function Components() {
           }
       }
 
-      parseTask.reset(); setIsFormOpen(false);
+      parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false);
       fetchComponents(pagination.page, pagination.page_size);
       fetchComponentOptions();
     } catch (error) {
@@ -1272,11 +1268,12 @@ export default function Components() {
   const parsePlatform = async (code?: string) => {
     const parseCode = (code ?? platformCode).trim();
     if (!parseCode) { toast.error('请输入供应商料号'); return; }
-    await parseTask.start({ type: 'component_parse', input: { code: parseCode, use_llm: useAIParse }, source: 'components', record_id: editingComponent?.id }, parseSnapshot());
+    setSupplierReference(undefined);
+    await parseTask.start({ type: 'component_parse', input: { code: parseCode, parse_mode: parseMode }, source: 'components', record_id: editingComponent?.id }, parseSnapshot());
   };
 
   const applyPhotoResults = (items: ReviewedImageItem[]) => {
-    parseTask.reset();
+    parseTask.reset(); setSupplierReference(undefined);
     const first = items[0];
     if (editingComponent) {
       applyParsedComponent(photoComponentInfo(first), first.quantity);
@@ -1407,9 +1404,10 @@ export default function Components() {
     let snapshot = parseSnapshot();
     if (!isFormOpen) {
       openForm();
-      snapshot = { form: { stock_quantity: 0 }, category: '', supplier: '', price: '', preview: '', file: null };
+      snapshot = { platformCode: '', form: { stock_quantity: 0 }, category: '', supplier: '', price: '', preview: '', file: null };
     }
-    await parseTask.start({ type: 'qrcode_parse', input: { qrcode_data: data, use_llm: useAIParse }, source: 'components', record_id: isFormOpen ? editingComponent?.id : undefined }, snapshot);
+    setSupplierReference(undefined);
+    await parseTask.start({ type: 'qrcode_parse', input: { qrcode_data: data, parse_mode: parseMode }, source: 'components', record_id: isFormOpen ? editingComponent?.id : undefined }, snapshot);
   };
 
   return (
@@ -1822,11 +1820,11 @@ export default function Components() {
       {/* Edit/Add Modal */}
       <Modal 
         isOpen={isFormOpen && !isPhotoParseOpen}
-        onClose={() => { parseTask.reset(); setIsFormOpen(false); }}
+        onClose={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }}
         title={editingComponent ? '编辑元件' : isCopyingComponent ? '复制元件' : '添加元件'}
         footer={
           <>
-            <Button variant="outline" onClick={() => { parseTask.reset(); setIsFormOpen(false); }}>取消</Button>
+            <Button variant="outline" onClick={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }}>取消</Button>
             <Button onClick={handleFormSubmit} disabled={saving}>保存</Button>
           </>
         }
@@ -1838,6 +1836,7 @@ export default function Components() {
              <div className="bg-secondary/20 p-4 rounded-md space-y-4">
                 <Label>{editingComponent ? '根据供应商料号更新' : '快速导入'}</Label>
                 <ParseTaskStatus task={parseTask.task} />
+                <SupplierReference component={matchingSupplierReference(supplierReference, formData.supplier_part_number || '', editingComponent ? formData.supplier_part_number || '' : platformCode)} />
                 <div className="flex gap-2">
                     <Input
                       placeholder="输入平台编码 (如 C2040)"
@@ -1870,15 +1869,7 @@ export default function Components() {
                       <Camera className="mr-2 h-4 w-4" />拍照 AI
                     </Button>
                 </div>
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <input
-                        type="checkbox"
-                        checked={useAIParse}
-                        onChange={e => setUseAIParse(e.target.checked)}
-                        className="h-4 w-4 rounded border-input disabled:opacity-50"
-                    />
-                    AI 解析（平台编码 / 扫码）
-                </label>
+                <ParseModeSelect value={parseMode} onChange={setParseMode} />
              </div>
 
             <div className="grid grid-cols-2 gap-4">

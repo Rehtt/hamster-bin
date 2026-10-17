@@ -1,7 +1,10 @@
+import { ParseModeSelect } from '../components/ParseModeSelect';
+import type { ParseMode } from '../types';
 import { useParseTask } from '../hooks/useParseTask';
 import { useTaskApplication } from '../hooks/useTaskApplication';
 import { ParseTaskStatus } from '../components/ParseTaskStatus';
-import { mergeParsed } from '../utils/parseResult';
+import { mergeParsed, parsedComponentFields, matchingSupplierReference } from '../utils/parseResult';
+import { SupplierReference } from '../components/SupplierReference';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CheckCircle2, Edit, Hash, Loader2, Minus, Plus, QrCode, Search, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -98,7 +101,8 @@ export default function PreStocks() {
   const [showPackageDropdown, setShowPackageDropdown] = useState(false);
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const [platformCode, setPlatformCode] = useState('');
-  const [useAIParse, setUseAIParse] = useState(false);
+  const [supplierReference, setSupplierReference] = useState<ParsedComponentInfo>();
+  const [parseMode, setParseMode] = useState<ParseMode>('standard');
   const [isPhotoParseOpen, setIsPhotoParseOpen] = useState(false);
   const photoDrafts = usePhotoDrafts<PhotoDraft>();
   const [recoveredPhotoTask, setRecoveredPhotoTask] = useState<ParseTask>();
@@ -175,7 +179,7 @@ export default function PreStocks() {
   }, []);
 
   const openForm = (item?: PreStock) => {
-    parseTask.reset();
+    parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset();
     setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     if (item) {
@@ -251,7 +255,7 @@ export default function PreStocks() {
 
   const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
   const loadPhotoDraft = (draft: PhotoDraft) => {
-    parseTask.reset(); setForm(draft.form); setCategoryInput(draft.category);
+    parseTask.reset(); setSupplierReference(undefined); setForm(draft.form); setCategoryInput(draft.category);
     setSupplierInput(draft.supplier); setPlatformCode(draft.platformCode);
   };
   const switchPhotoDraft = (index: number) => loadPhotoDraft(photoDrafts.select(index, currentPhotoDraft()));
@@ -275,7 +279,7 @@ export default function PreStocks() {
           total_price_cents: yuanToCents(draft.form.total_price_yuan),
         })) });
         toast.success(`已批量创建 ${drafts.length} 条预入库记录`);
-        photoDrafts.reset(); parseTask.reset(); setIsFormOpen(false);
+        photoDrafts.reset(); parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false);
         await Promise.all([fetchItems(pagination.page, pagination.page_size), fetchComponentOptions(), fetchCategories(), fetchSuppliers()]);
         return;
       }
@@ -313,7 +317,7 @@ export default function PreStocks() {
         toast.success(number ? `已生成编号 ${number}` : '预入库记录已创建');
       }
 
-      parseTask.reset(); setIsFormOpen(false);
+      parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false);
       await fetchItems(pagination.page, pagination.page_size);
       await fetchComponentOptions();
     } catch (error) {
@@ -327,15 +331,12 @@ export default function PreStocks() {
     }
   };
 
-  type ParseSnapshot = { form: PreStockForm; category: string; supplier: string };
+  type ParseSnapshot = { platformCode: string; form: PreStockForm; category: string; supplier: string };
   type PhotoDraft = ParseSnapshot & { platformCode: string };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
-    const parsed: Partial<PreStockForm> = {
-      name: component.name || component.model,
-      model: component.model, manufacturer: component.manufacturer, value: component.value,
-      package: component.package, supplier_part_number: component.platform_code,
-      description: component.description, datasheet_url: component.datasheet_url, image_url: component.image_url,
-    };
+    setSupplierReference(component);
+    setPlatformCode(prev => !snapshot || prev === snapshot.platformCode ? component.platform_code || prev : prev);
+    const parsed: Partial<PreStockForm> = parsedComponentFields(component);
     if (quantity !== undefined && quantity >= 0) parsed.expected_quantity = quantity;
     setForm(prev => mergeParsed(prev, parsed, snapshot?.form));
     if (component.category_name) setCategoryInput(prev => !snapshot || prev === snapshot.category ? component.category_name! : prev);
@@ -343,7 +344,7 @@ export default function PreStocks() {
     if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
   };
   const applyPhotoResults = (items: ReviewedImageItem[]) => {
-    parseTask.reset();
+    parseTask.reset(); setSupplierReference(undefined);
     const first = items[0];
     if (editingItem) {
       applyParsedComponent(photoComponentInfo(first), first.quantity);
@@ -362,18 +363,20 @@ export default function PreStocks() {
   };
   const parseTask = useParseTask<ParseSnapshot>((result, snapshot) => { if (result.component) applyParsedComponent(result.component, result.quantity, snapshot); });
   const isParsing = parseTask.busy;
-  const parseSnapshot = (): ParseSnapshot => ({ form: { ...form }, category: categoryInput, supplier: supplierInput });
+  const parseSnapshot = (): ParseSnapshot => ({ platformCode, form: { ...form }, category: categoryInput, supplier: supplierInput });
   const parsePlatform = async () => {
     const code = platformCode.trim();
     if (!code) { toast.error('请输入供应商料号'); return; }
-    await parseTask.start({ type: 'component_parse', input: { code, use_llm: useAIParse }, source: 'pre-stocks', record_id: editingItem?.id }, parseSnapshot());
+    setSupplierReference(undefined);
+    await parseTask.start({ type: 'component_parse', input: { code, parse_mode: parseMode }, source: 'pre-stocks', record_id: editingItem?.id }, parseSnapshot());
   };
   const handleScan = async (data: string) => {
     if (isParsing) return;
     setIsScannerOpen(false);
     let snapshot = parseSnapshot();
-    if (!isFormOpen) { openForm(); snapshot = { form: { ...EMPTY_FORM }, category: '', supplier: '' }; }
-    await parseTask.start({ type: 'qrcode_parse', input: { qrcode_data: data, use_llm: useAIParse }, source: 'pre-stocks', record_id: isFormOpen ? editingItem?.id : undefined }, snapshot);
+    if (!isFormOpen) { openForm(); snapshot = { platformCode: '', form: { ...EMPTY_FORM }, category: '', supplier: '' }; }
+    setSupplierReference(undefined);
+    await parseTask.start({ type: 'qrcode_parse', input: { qrcode_data: data, parse_mode: parseMode }, source: 'pre-stocks', record_id: isFormOpen ? editingItem?.id : undefined }, snapshot);
   };
   useTaskApplication<PreStock>('pre-stocks', (task, record) => {
     openForm(record);
@@ -620,12 +623,12 @@ export default function PreStocks() {
 
       <Modal
         isOpen={isFormOpen && !isPhotoParseOpen}
-        onClose={() => { parseTask.reset(); setIsFormOpen(false); }}
+        onClose={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }}
         title={editingItem ? '编辑预入库' : '新建预入库'}
         className="max-w-2xl"
         footer={
           <>
-            <Button variant="outline" onClick={() => { parseTask.reset(); setIsFormOpen(false); }} disabled={saving}>取消</Button>
+            <Button variant="outline" onClick={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }} disabled={saving}>取消</Button>
             <Button onClick={handleSubmit} disabled={saving}>
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />保存中...</> : '保存'}
             </Button>
@@ -637,6 +640,7 @@ export default function PreStocks() {
           <div className="bg-secondary/20 p-4 rounded-md space-y-4">
             <Label>快速导入</Label>
             <ParseTaskStatus task={parseTask.task} />
+            <SupplierReference component={matchingSupplierReference(supplierReference, form.supplier_part_number, platformCode)} />
             <div className="flex gap-2">
               <Input
                 placeholder="输入平台编码 (如 C2040)"
@@ -651,15 +655,7 @@ export default function PreStocks() {
                 <QrCode className="mr-2 h-4 w-4" /> 扫码
               </Button>
             </div>
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={useAIParse}
-                onChange={e => setUseAIParse(e.target.checked)}
-                className="h-4 w-4 rounded border-input disabled:opacity-50"
-              />
-              AI 解析
-            </label>
+            <ParseModeSelect value={parseMode} onChange={setParseMode} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

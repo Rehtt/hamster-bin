@@ -8,19 +8,34 @@ import (
 
 // ComponentInfo 从平台解析出的元件信息
 type ComponentInfo struct {
-	Name         string  `json:"name"`          // 元件名称
-	CategoryName string  `json:"category_name"` // 建议分类名称
-	Model        string  `json:"model"`         // 型号
-	Value        string  `json:"value"`         // 参数值
-	Package      string  `json:"package"`       // 封装
-	Description  string  `json:"description"`   // 描述
-	Manufacturer string  `json:"manufacturer"`  // 制造商
-	Price        float64 `json:"price"`         // 单价
-	ImageURL     string  `json:"image_url"`     // 图片URL
-	DatasheetURL string  `json:"datasheet_url"` // 数据手册URL
-	PlatformCode string  `json:"platform_code"` // 平台编码
-	PlatformName string  `json:"platform_name"` // 平台名称
-	PlatformURL  string  `json:"platform_url"`  // 平台链接
+	SupplierQuote *SupplierQuote `json:"supplier_quote,omitempty"` // 供应商参考快照，不参与库存和采购金额计算
+	Name          string         `json:"name"`                     // 元件名称
+	CategoryName  string         `json:"category_name"`            // 建议分类名称
+	Model         string         `json:"model"`                    // 型号
+	Value         string         `json:"value"`                    // 参数值
+	Package       string         `json:"package"`                  // 封装
+	Description   string         `json:"description"`              // 描述
+	Manufacturer  string         `json:"manufacturer"`             // 制造商
+	Price         float64        `json:"price"`                    // 单价
+	ImageURL      string         `json:"image_url"`                // 图片URL
+	DatasheetURL  string         `json:"datasheet_url"`            // 数据手册URL
+	PlatformCode  string         `json:"platform_code"`            // 平台编码
+	PlatformName  string         `json:"platform_name"`            // 平台名称
+	PlatformURL   string         `json:"platform_url"`             // 平台链接
+}
+
+type SupplierQuote struct {
+	StockQuantity *int64              `json:"stock_quantity"`
+	Currency      *string             `json:"currency"`
+	PriceTiers    []SupplierPriceTier `json:"price_tiers"`
+	SourceName    string              `json:"source_name,omitempty"`
+	SourceURL     string              `json:"source_url,omitempty"`
+	QueriedAt     string              `json:"queried_at"`
+}
+
+type SupplierPriceTier struct {
+	MinQuantity int64  `json:"min_quantity"`
+	UnitPrice   string `json:"unit_price"`
 }
 
 // Parser 平台解析器接口
@@ -37,8 +52,10 @@ type Parser interface {
 
 // ParseOptions 解析选项
 type ParseOptions struct {
-	UseLLM  bool            `json:"use_llm"`
-	Context context.Context `json:"-"`
+	ParseMode string          `json:"parse_mode,omitempty"`
+	Trace     *ParseTrace     `json:"-"`
+	UseLLM    bool            `json:"use_llm"`
+	Context   context.Context `json:"-"`
 }
 
 // OptionParser 支持可选解析策略的平台解析器
@@ -87,6 +104,12 @@ func (m *ParserManager) Parse(code string) (*ComponentInfo, error) {
 
 // ParseWithOptions 自动选择合适的解析器并传入解析选项
 func (m *ParserManager) ParseWithOptions(code string, options ParseOptions) (*ComponentInfo, error) {
+	if options.Trace != nil {
+		*options.Trace = ParseTrace{Mode: options.Mode(), Calls: []ParseCall{}}
+	}
+	if err := options.ValidateMode(); err != nil {
+		return nil, err
+	}
 	if len(m.parsers) == 0 {
 		return nil, ErrNoParsersAvailable
 	}
@@ -114,6 +137,9 @@ func (m *ParserManager) GetAvailableParsers() []string {
 
 // Validate 在入队前验证编码和配置，不发起网络请求。
 func (m *ParserManager) Validate(code string, options ParseOptions) error {
+	if err := options.ValidateMode(); err != nil {
+		return err
+	}
 	if len(m.parsers) == 0 {
 		return ErrNoParsersAvailable
 	}
@@ -133,4 +159,23 @@ func (o ParseOptions) ExecutionContext() context.Context {
 		return o.Context
 	}
 	return context.Background()
+}
+
+var ErrInvalidParseMode = errors.New("无效的 parse_mode，仅支持 standard、llm、agent")
+
+func (o ParseOptions) Mode() string {
+	if o.ParseMode != "" {
+		return o.ParseMode
+	}
+	if o.UseLLM {
+		return "llm"
+	}
+	return "standard"
+}
+func (o ParseOptions) ValidateMode() error {
+	switch o.Mode() {
+	case "standard", "llm", "agent":
+		return nil
+	}
+	return ErrInvalidParseMode
 }

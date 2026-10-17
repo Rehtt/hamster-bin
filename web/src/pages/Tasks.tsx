@@ -1,3 +1,4 @@
+import { ParseTraceView } from '../components/ParseTraceView';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
@@ -7,8 +8,9 @@ import { taskPending, taskStatusLabel, useTasks } from '../context/tasks';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SupplierReference } from '../components/SupplierReference';
 
-const typeLabel = (task: ParseTask) => `${task.type === 'qrcode_parse' ? '二维码' : task.type === 'image_parse' ? '照片' : '平台编码'}${task.input.use_llm || task.type === 'image_parse' ? ' · AI' : ''}`;
+const typeLabel = (task: ParseTask) => `${task.type === 'qrcode_parse' ? '二维码' : task.type === 'image_parse' ? '照片' : '平台编码'}${task.type === 'image_parse' ? ' · AI' : task.input.parse_mode === 'agent' ? ' · Agent 解析' : (task.input.parse_mode ? task.input.parse_mode === 'llm' : task.input.use_llm) ? ' · AI 整理' : ' · 普通解析'}`;
 export default function Tasks() {
   const [items, setItems] = useState<ParseTask[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
@@ -90,7 +92,8 @@ export default function Tasks() {
         <p className="font-medium">输入</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.input, null, 2)}</pre>
         {detail.type === 'image_parse' && <img src={`/api/v1/tasks/${detail.id}/image`} alt="照片解析原图" className="max-h-64 max-w-full rounded border object-contain" />}
         {detail.error && <p role="alert" className="text-destructive">{detail.error}（{detail.error_code}）</p>}
-        {detail.result && <><p className="font-medium">解析结果</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.result, null, 2)}</pre></>}
+        <ParseTraceView trace={detail.result?.parse_trace} />
+        {detail.result && <><SupplierReference component={detail.result.component} /><p className="font-medium">解析结果</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.result, null, 2)}</pre></>}
       </div>}
     </Modal>
   </div>;

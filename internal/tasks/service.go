@@ -27,6 +27,7 @@ func ValidType(kind string) bool {
 type Input struct {
 	Code       string      `json:"code,omitempty"`
 	QRCodeData string      `json:"qrcode_data,omitempty"`
+	ParseMode  string      `json:"parse_mode,omitempty"`
 	UseLLM     bool        `json:"use_llm"`
 	Image      *ImageInput `json:"image,omitempty"`
 }
@@ -42,6 +43,7 @@ func (s *Service) ImageRequest(source string, recordID *uint) Request {
 }
 
 type Result struct {
+	ParseTrace *parser.ParseTrace    `json:"parse_trace,omitempty"`
 	Component  *parser.ComponentInfo `json:"component,omitempty"`
 	Items      []parser.ImageItem    `json:"items,omitempty"`
 	Quantity   int                   `json:"quantity,omitempty"`
@@ -123,7 +125,7 @@ func (s *Service) Validate(req Request) error {
 	if code == "" || len(code) > 4096 || len(req.Input.QRCodeData) > 65536 {
 		return errors.New("编码为空或过长")
 	}
-	return s.manager.Validate(code, parser.ParseOptions{UseLLM: req.Input.UseLLM})
+	return s.manager.Validate(code, parser.ParseOptions{ParseMode: req.Input.ParseMode, UseLLM: req.Input.UseLLM})
 }
 func (s *Service) Submit(req Request, retryOf *uint) (*models.Task, error) {
 	if err := s.Validate(req); err != nil {
@@ -310,6 +312,11 @@ func (s *Service) run(ctx context.Context, t *models.Task) {
 			data = models.JSONText(raw)
 		}
 	}
+	if status == repository.TaskFailed && result != nil && result.ParseTrace != nil {
+		// 失败结果只保存诊断，不保留可应用资料。
+		raw, _ := json.Marshal(&Result{ParseTrace: result.ParseTrace})
+		data = models.JSONText(raw)
+	}
 	if err := s.Repo.Finish(t.ID, status, data, message, code); err != nil {
 		log.Printf("保存任务 %d 结果失败: %v", t.ID, err)
 	}
@@ -326,7 +333,7 @@ func (s *Service) parse(ctx context.Context, kind string, input Input) (*Result,
 		}
 		return &Result{Items: items}, nil
 	}
-	result := &Result{}
+	result := &Result{ParseTrace: &parser.ParseTrace{}}
 	code := input.Code
 	if kind == QRCodeParse {
 		qr, err := parser.ParseQRCode(input.QRCodeData)
@@ -337,9 +344,9 @@ func (s *Service) parse(ctx context.Context, kind string, input Input) (*Result,
 		result.Quantity = qr.Quantity
 		code = qr.Code
 	}
-	info, err := s.manager.ParseWithOptions(code, parser.ParseOptions{UseLLM: input.UseLLM, Context: ctx})
+	info, err := s.manager.ParseWithOptions(code, parser.ParseOptions{ParseMode: input.ParseMode, Trace: result.ParseTrace, UseLLM: input.UseLLM, Context: ctx})
 	if err != nil {
-		return nil, fmt.Errorf("解析失败: %w", err)
+		return result, fmt.Errorf("解析失败: %w", err)
 	}
 	result.Component = info
 	return result, nil
