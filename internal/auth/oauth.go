@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/repository"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
@@ -47,8 +48,9 @@ func (s *Service) discover(ctx context.Context) error {
 	}
 	var metadata struct {
 		RevokeURL string `json:"revocation_endpoint"`
+		JWKSURL   string `json:"jwks_uri"`
 	}
-	if provider.Claims(&metadata) != nil || metadata.RevokeURL == "" {
+	if provider.Claims(&metadata) != nil || metadata.RevokeURL == "" || metadata.JWKSURL == "" {
 		return ErrOAuthUnavailable
 	}
 	endpoint := provider.Endpoint()
@@ -63,11 +65,21 @@ func (s *Service) discover(ctx context.Context) error {
 		ClientID: s.cfg.OAuthClientID, SupportedSigningAlgs: []string{oidc.RS256},
 	})
 	s.revokeURL = metadata.RevokeURL
+	s.jwksURL = metadata.JWKSURL
 	s.provider = provider
 	return nil
 }
 
-func (s *Service) verifyID(ctx context.Context, raw, nonce, subject string, requireNonce bool) (*oidc.IDToken, error) {
+type oauthID struct {
+	*oidc.IDToken
+	SessionID string
+}
+
+func (s *Service) verifyID(ctx context.Context, raw, nonce, subject string, requireNonce bool) (*oauthID, error) {
+	header, err := tokenHeader(raw)
+	if err != nil || header.Type == "logout+jwt" {
+		return nil, ErrInvalidToken
+	}
 	token, err := s.verifier.Verify(ctx, raw)
 	if err != nil || token.Subject == "" || token.Issuer != s.cfg.OAuthIssuer || token.IssuedAt.IsZero() || token.Expiry.IsZero() || token.IssuedAt.After(time.Now().Add(time.Minute)) || !token.IssuedAt.Before(token.Expiry) {
 		return nil, ErrInvalidToken
@@ -81,12 +93,17 @@ func (s *Service) verifyID(ctx context.Context, raw, nonce, subject string, requ
 		}
 	}
 	var claims struct {
-		AuthorizedParty string `json:"azp"`
+		AuthorizedParty string                     `json:"azp"`
+		SessionID       string                     `json:"sid"`
+		Events          map[string]json.RawMessage `json:"events"`
 	}
-	if token.Claims(&claims) != nil || (len(token.Audience) > 1 && claims.AuthorizedParty == "") || (claims.AuthorizedParty != "" && claims.AuthorizedParty != s.cfg.OAuthClientID) {
+	if token.Claims(&claims) != nil || strings.TrimSpace(claims.SessionID) == "" || (len(token.Audience) > 1 && claims.AuthorizedParty == "") || (claims.AuthorizedParty != "" && claims.AuthorizedParty != s.cfg.OAuthClientID) {
 		return nil, ErrInvalidToken
 	}
-	return token, nil
+	if _, logout := claims.Events[logoutEvent]; logout {
+		return nil, ErrInvalidToken
+	}
+	return &oauthID{token, claims.SessionID}, nil
 }
 
 func (s *Service) userInfo(ctx context.Context, access, subject string) (*oauthProfile, error) {
@@ -160,7 +177,8 @@ func (s *Service) refresh(ctx context.Context, session *models.OAuthSession, sub
 		return ErrInvalidToken
 	}
 	if response.ID != "" {
-		if _, err := s.verifyID(ctx, response.ID, stored.Nonce, subject, false); err != nil {
+		id, err := s.verifyID(ctx, response.ID, stored.Nonce, subject, false)
+		if err != nil || id.SessionID != session.ProviderSID {
 			s.revoke(ctx, response.Refresh)
 			return ErrInvalidToken
 		}
@@ -174,7 +192,10 @@ func (s *Service) refresh(ctx context.Context, session *models.OAuthSession, sub
 	session.Tokens = encrypted
 	session.AccessExpiresAt = time.Now().Add(time.Duration(response.ExpiresIn) * time.Second)
 	if err := s.repo.CompleteRefresh(ctx, session); err != nil {
-		s.revoke(context.WithoutCancel(ctx), response.Refresh)
+		// 通知只结束本地会话；已删除的目标不能恢复，也不额外撤销离线授权。
+		if !errors.Is(err, repository.ErrOAuthSessionEnded) {
+			s.revoke(context.WithoutCancel(ctx), response.Refresh)
+		}
 		return ErrInvalidToken
 	}
 	*stored = updated
@@ -197,9 +218,9 @@ func (s *Service) finishLogin(ctx context.Context, code string, flow loginFlow) 
 	}, &response) != nil {
 		return "", time.Time{}, ErrOAuthUnavailable
 	}
-	completed := false
+	revokeOnFailure := true
 	defer func() {
-		if !completed {
+		if revokeOnFailure {
 			s.revoke(context.WithoutCancel(ctx), response.Refresh)
 		}
 	}()
@@ -225,7 +246,8 @@ func (s *Service) finishLogin(ctx context.Context, code string, flow loginFlow) 
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	session := &models.OAuthSession{ID: key, ClientID: s.cfg.OAuthClientID, Tokens: encrypted, AccessExpiresAt: time.Now().Add(time.Duration(response.ExpiresIn) * time.Second), ExpiresAt: expires}
+	target := targetKey(id.Issuer, s.cfg.OAuthClientID, id.Subject, id.SessionID)
+	session := &models.OAuthSession{ID: key, ClientID: s.cfg.OAuthClientID, ProviderSID: id.SessionID, TargetKey: target, Tokens: encrypted, AccessExpiresAt: time.Now().Add(time.Duration(response.ExpiresIn) * time.Second), ExpiresAt: expires}
 	localToken, err := IssueOAuthToken(profile.displayName(), sessionID, s.cfg.JWTSecret, expires)
 	if err != nil {
 		return "", time.Time{}, err
@@ -233,9 +255,21 @@ func (s *Service) finishLogin(ctx context.Context, code string, flow loginFlow) 
 	if err := s.repo.Cleanup(ctx, false); err != nil {
 		return "", time.Time{}, ErrOAuthUnavailable
 	}
-	if err := s.repo.CreateLogin(ctx, identity, session); err != nil {
+	unlock, err := s.lockSession(ctx, "target:"+target)
+	if err != nil {
 		return "", time.Time{}, ErrOAuthUnavailable
 	}
-	completed = true
+	defer unlock()
+	if err := s.repo.CreateLogin(ctx, identity, session, id.Expiry); err != nil {
+		if errors.Is(err, repository.ErrOAuthSessionEnded) {
+			revokeOnFailure = false
+			return "", time.Time{}, ErrInvalidToken
+		}
+		if errors.Is(err, repository.ErrOAuthIDExpired) {
+			return "", time.Time{}, ErrInvalidToken
+		}
+		return "", time.Time{}, ErrOAuthUnavailable
+	}
+	revokeOnFailure = false
 	return localToken, expires, nil
 }

@@ -68,12 +68,12 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 
 - `cmd/server/main.go` 是唯一服务入口。它支持 `--version` 输出版本；正常启动时调用 `config.Load()`、`database.Init()`、注册 `parser.ParserManager`，然后通过 `router.Setup(db, parserManager, cfg, taskService)` 启动 Gin 服务。
 - `internal/config/config.go` 从环境变量读取配置，当前包含 `PORT`、`DB_DRIVER`、`DB_DSN`、`DB_PATH`、`IMAGE_DIR`、`LOG_LEVEL`、`SSL_CERT`、`SSL_KEY`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`JWT_SECRET`、`JWT_EXPIRE_HOURS`、`MCP_TOKEN`、`MCP_ALLOWED_ORIGINS`、`TASK_WORKERS`、`TASK_TIMEOUT_SECONDS`。另含 `OAUTH_ENABLED`、`OAUTH_ISSUER`、`OAUTH_CLIENT_ID`、`OAUTH_CLIENT_SECRET`、`OAUTH_REDIRECT_URL`、`OAUTH_AUTH_METHOD`。管理员凭据完整或启用 OAuth 时保护业务接口，`JWT_SECRET` 必填；OAuth 配置不完整、URL 非法或认证方式不支持时启动报错。
-- `internal/auth/` 负责 JWT 签发/解析（Cookie 名 `hamster_token`）、管理员凭据恒定时间比较及 OIDC。`service.go` 是 handler/middleware 共用认证入口；`oauth.go` 使用 go-oidc v3.21.0 与 oauth2 v0.36.0 完成发现、ID Token/UserInfo 校验、显式刷新/撤销；`oauth_flow.go` 管理短期浏览器登录流程；`oauth_crypto.go` 用 HKDF 派生密钥并以 AES-GCM 加密令牌。
+- `internal/auth/` 负责 JWT 签发/解析（Cookie 名 `hamster_token`）、管理员凭据恒定时间比较及 OIDC。`service.go` 是 handler/middleware 共用认证入口；`oauth.go` 使用 go-oidc v3.21.0 与 oauth2 v0.36.0 完成发现、ID Token/UserInfo 校验、显式刷新/撤销；`oauth_logout.go` 校验后端通道退出令牌并关闭目标会话；`oauth_flow.go` 管理短期浏览器登录流程；`oauth_crypto.go` 用 HKDF 派生密钥并以 AES-GCM 加密令牌。
 - `internal/middleware/auth.go` 在鉴权启用时验证本地 JWT；OAuth 登录还需读取持久化会话并在线调用 UserInfo，失败清除会话/Cookie，保护业务 API。
 - `internal/mcp/` 使用官方 `github.com/modelcontextprotocol/go-sdk v1.8.0`，提供无状态 Streamable HTTP 和 JSON 响应。`http.go` 处理独立 Token/Origin/CORS，`inputs.go` 定义中文参数 Schema，`server.go` 注册工具并复用 repository/price；SDK 自动生成结构化结果与兼容 JSON 文本，并将业务错误转换为 `isError`。
 - `internal/repository/inventory_write.go` 为 MCP 补充带关联校验的创建事务和字段级更新。元件编号、价格分摊、保存及有价初始流水同事务提交；更新限制资料字段，保留未传字段与库存/单价。预入库仅允许编辑 pending，校验失败回滚。REST 契约保持原样，无新增迁移或前端页面。
 - 入出库与预入库确认在支持的数据库上使用事务行锁；SQLite 沿用事务写锁。库存与金额运算拒绝会造成整数溢出的输入。
-- `internal/database/database.go` 按 `DB_DRIVER` 打开 SQLite/MySQL/PostgreSQL 的 GORM 连接；SQLite 会创建数据目录并设置 pragma，所有数据库都会自动迁移 `Category`、`Supplier`、`Component`、`PreStock`、`StockLog`、`Task`、`OAuthIdentity`、`OAuthSession`。
+- `internal/database/database.go` 按 `DB_DRIVER` 打开 SQLite/MySQL/PostgreSQL 的 GORM 连接；SQLite 会创建数据目录并设置 pragma，所有数据库都会自动迁移 `Category`、`Supplier`、`Component`、`PreStock`、`StockLog`、`Task`、`OAuthIdentity`、`OAuthSession`、`OAuthLogout`。
 - `internal/models/models.go` 定义数据库表结构和 JSON 字段，是前后端数据契约的重要来源。
 - `internal/router/router.go` 暴露 `/api/v1` API；`/api/v1/auth/*` 为公开路由，其余业务接口在鉴权启用时需登录。静态资源仍从嵌入的 `web/dist` 提供。访问日志只记录路径，不记录查询或请求头；panic 恢复日志不输出请求或 panic 值，避免泄露回调凭据。
 - `internal/handlers/` 负责 HTTP 输入输出和状态码。业务实体目前按 `category`、`supplier`、`component`、`stock_log`、`stats`、`parser`、`tasks`、`auth` 拆分。
@@ -193,6 +193,7 @@ docker compose down
 - 主要 API 分组：
   - `/api/v1/auth/config`（GET，公开；`data` 含 `auth_enabled`、`password_enabled`、`oauth_enabled`，不暴露密钥）
   - `/api/v1/auth/oauth/login`、`/api/v1/auth/oauth/callback`（GET，公开；OAuth 未启用返回 404）
+  - `/api/v1/auth/oauth/backchannel-logout`（POST，公开；签名令牌认证，无需 Cookie；OAuth 未启用返回 404）
   - `/api/v1/auth/login`（POST，公开；仅密码登录已启用时可用）
   - `/api/v1/auth/logout`（POST，公开）
   - `/api/v1/auth/me`（GET，公开；鉴权关闭返回 `{ auth_enabled: false }`，已登录返回 `{ auth_enabled: true, username, auth_method }`，未登录返回 401）
@@ -252,13 +253,16 @@ docker compose down
 - `OAUTH_ENABLED` 默认 `false`；Issuer 默认 `https://oauth.home.rehtt.com`，必须与发现文档完全一致且末尾无 `/`；客户端 ID、密钥、回调地址启用时必填；认证方式默认 `client_secret_basic`，可选 `client_secret_post`，禁止自动探测/重试认证方式。生产 HTTPS，仅本地回环允许 HTTP。
 - 回调固定 `/api/v1/auth/oauth/callback`，配置为浏览器访问站点的完整地址，不带查询/片段，统一登录侧须精确登记。开发可使用 `http://127.0.0.1:5173` 经 Vite `/api` 代理；不额外增加前端回调页。发现文档按需读取并缓存，HTTP 客户端超时 10 秒、禁止跟随重定向，不在启动时依赖提供方在线。
 - 固定申请 `openid profile email offline_access`；管理员须允许这些 scope 并分配用户。已分配用户共享现有全部库存权限，无用户管理页面、角色或数据隔离。邮箱未验证，不可据其合并账号。
-- `oauth_identities` 记录 `(iss, sub)`、展示资料；唯一键为 JSON 编码二元组的 SHA-256 摘要，避免数据库排序规则合并不同标识。`oauth_sessions` 保存身份引用、客户端 ID、会话 ID 摘要、加密令牌、访问/本地过期时间和刷新中标记；令牌字段不序列化。加密密钥由 JWT_SECRET 经 HKDF 独立派生，AES-GCM 绑定会话摘要；提供方令牌不出现在浏览器、日志或业务响应中。
-- 本地 OAuth JWT 保存 `auth_method:oauth` 和随机 `session_id` 引用。OAuth 会话按 `JWT_EXPIRE_HOURS` 固定到期，最多 30 天，不随刷新续期；密码会话继续使用原 JWT 机制。正常重启恢复会话，启动清理过期或刷新中记录，登录时清理过期记录。
+- `oauth_identities` 记录 `(iss, sub)`、展示资料；唯一键为 JSON 编码二元组的 SHA-256 摘要，避免数据库排序规则合并不同标识。`oauth_sessions` 保存身份引用、客户端 ID、会话 ID 摘要、已验证 ID Token 的 `provider_sid`、`target_key`、加密令牌、访问/本地过期时间和刷新中标记；`target_key` 是 JSON 编码 `(iss, client_id, sub, sid)` 四元组的 SHA-256 摘要并建索引。令牌字段不序列化；加密密钥由 JWT_SECRET 经 HKDF 独立派生，AES-GCM 绑定会话摘要；提供方令牌不出现在浏览器、日志或业务响应中。
+- 本地 OAuth JWT 保存 `auth_method:oauth` 和随机 `session_id` 引用。OAuth 会话按 `JWT_EXPIRE_HOURS` 固定到期，最多 30 天，不随刷新续期；密码会话继续使用原 JWT 机制。正常重启恢复会话；启动清理过期、刷新中及缺少提供方 sid/目标索引的旧记录，升级后旧 OAuth 会话须重新登录。登录时也清理过期/旧记录。
 - 授权流程用绑定浏览器的 HttpOnly Cookie `hamster_oauth_flow`（Path `/api/v1/auth/oauth`）关联服务端 state/nonce/S256 verifier；10 分钟有效，最多 1000 条，过期惰性清理。同浏览器重新发起会替换旧流程；回调先消费记录，再拒绝缺失/重复/错误/重放参数。重启后未完成流程重新登录。
-- ID Token 固定 RS256，通过发现的 JWKS 验签并检查 iss/aud/azp/exp/iat/sub/nonce，再核对 UserInfo sub；未知 kid 由库刷新公钥缓存。回调设置 no-store/no-referrer，成功跳转 `/`，失败仅携带固定 oauth_error 标识到 `/login`。
-- OAuth 每个受保护请求和 `/auth/me` 都调用 UserInfo，无有效结果缓存；检查失败（含网络异常）清除本地会话并返回 401。访问令牌剩余不足 30 秒时刷新，同一会话的检查/刷新/退出串行化。网络交换前提交 refreshing 标记，成功原子替换令牌；超时、保存失败、重启中断均失效，不能重试旧刷新令牌或授权码。
-- 退出先清除本地记录和 Cookie，再尽力撤销最新刷新令牌；不实现跨应用退出。切换登录方式也清理原 OAuth 会话。密码与 MCP 不参与 OAuth 在线检查。当前仅支持单实例，多实例需重新设计分布式锁及短期流程存储。
-- 测试：`internal/auth/oauth_test.go` 使用本地 OIDC/JWKS 与临时 SQLite，覆盖校验失败、撤权、轮换、并发、重启和加密；`internal/router/auth_test.go` 覆盖完整 HTTP 登录、Cookie、登录方式兼容和日志过滤。新增认证代码执行 `go test -race ./internal/auth ./internal/handlers ./internal/middleware ./internal/repository ./internal/router`；前端在 `web/` 执行 `npm run test:auth`，覆盖登录方式、加载/认证错误时阻止业务展示、已登录及免登录状态、固定回调错误提示。
+- ID Token 固定 RS256，通过发现的 JWKS 验签并检查 iss/aud/azp/exp/iat/sub/nonce/sid，再核对 UserInfo sub；未知 kid 由库刷新公钥缓存。登录和刷新均拒绝 `typ=logout+jwt` 或含退出事件的令牌；初次登录缺少 sid 不建会话，刷新返回 ID Token 时必须与原 sid 一致。最终落库前再次检查 ID Token 未过期。回调设置 no-store/no-referrer，成功跳转 `/`，失败仅携带固定 oauth_error 标识到 `/login`。
+- OAuth 每个受保护请求和 `/auth/me` 都调用 UserInfo，无有效结果缓存；检查失败（含网络异常）清除本地会话并返回 401。访问令牌剩余不足 30 秒时刷新，同一会话的检查/刷新/应用内退出串行化。网络交换前提交 refreshing 标记，成功条件更新令牌；已删除会话不能由刷新重建，在线检查结束后重新确认本地会话仍存在。超时、保存失败、重启中断均失效，不能重试旧刷新令牌或授权码。
+- 管理员在 OAuth 应用登记 `https://<库存域名>/api/v1/auth/oauth/backchannel-logout`，该地址必须能从 OAuth 服务直接访问。通知仅接收表单请求体内单个非空 `logout_token`，上限 64 KiB，拒绝 JSON、查询串令牌和重复令牌参数；所有响应设 `Cache-Control: no-store`，不读取或设置浏览器 Cookie。有效、重复或未知目标返回 200，非法请求/令牌返回 400，发现文档/JWKS/数据库暂时故障返回 503 供重试。
+- 退出令牌复用 go-oidc `VerifyLogout`，每次通知从可信发现文档的 `jwks_uri` 取公钥，匹配非空 kid，限定 RS256 和 `typ=logout+jwt`；不使用令牌内的公钥地址。检查 iss/aud、非空 sub/sid/jti、数值 iat/exp；iat 最多未来 1 分钟/过去 3 分钟，exp 尚有效且晚于 iat；退出事件必须为 JSON 对象，禁止任何值的 nonce。
+- `oauth_logouts` 按 `target_key` 持久化结束状态，保留 31 天，启动、登录和退出写入时清理过期记录；结束记录与目标下全部本地会话的删除在同一事务提交。登录最终落库与通知事务使用同一目标锁串行执行，拒绝已结束目标的迟到回调；幂等以目标为单位，不依赖每次重试可能变化的 jti。不会退化为按账号关闭其他设备。
+- 后端通知只删除本地会话和令牌，不额外撤销离线授权；页面下次业务请求 401 后由现有客户端跳转登录，不增加轮询。应用内退出仍先清除本地记录和 Cookie，再尽力撤销最新刷新令牌；切换登录方式也清理原 OAuth 会话。密码与 MCP 不参与同步退出或 OAuth 在线检查。本次不实现应用主动退出统一登录；当前仅支持单实例，多实例需重新设计分布式锁及短期流程存储。
+- 测试：`internal/auth/oauth_test.go` 与 `oauth_logout_test.go` 使用本地 OIDC/JWKS 和临时 SQLite，覆盖校验失败、撤权、轮换、通知幂等/目标隔离、并发、事务回滚、重启和加密；`internal/database/oauth_test.go` 覆盖旧表升级失效；`internal/router/auth_test.go` 覆盖完整 HTTP 登录/退出通知、Cookie、状态码、兼容和日志过滤。新增认证代码先执行 `go fix ./...`、`go fmt ./...`，再执行全量测试及 `go test -race ./internal/auth ./internal/database ./internal/handlers ./internal/middleware ./internal/repository ./internal/router`；前端在 `web/` 执行 `npm run lint`、`npm run test:auth` 和 `npm run build`，最后 `make build`。
 
 ## 修改约束
 

@@ -71,6 +71,7 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 			authGroup.GET("/config", authHandler.Config)
 			authGroup.GET("/oauth/login", authHandler.OAuthLogin)
 			authGroup.GET("/oauth/callback", authHandler.OAuthCallback)
+			authGroup.POST("/oauth/backchannel-logout", authHandler.OAuthBackchannelLogout)
 			authGroup.POST("/login", authHandler.Login)
 			authGroup.POST("/logout", authHandler.Logout)
 			authGroup.GET("/me", authHandler.Me)

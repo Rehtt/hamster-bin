@@ -26,6 +26,7 @@ type Service struct {
 	verifier    *oidc.IDTokenVerifier
 	oauthConfig *oauth2.Config
 	revokeURL   string
+	jwksURL     string
 	flowsMu     sync.Mutex
 	flows       map[string]loginFlow
 	locksMu     sync.Mutex
@@ -102,11 +103,14 @@ func (s *Service) Authenticate(ctx context.Context, raw string) (*Claims, error)
 		return nil, ErrInvalidToken
 	}
 	fail := func() (*Claims, error) { s.invalidate(id); return nil, ErrInvalidToken }
-	if session.Refreshing || !session.ExpiresAt.After(time.Now()) || session.ClientID != s.cfg.OAuthClientID {
+	if session.Refreshing || !session.ExpiresAt.After(time.Now()) || session.ClientID != s.cfg.OAuthClientID || session.ProviderSID == "" {
 		return fail()
 	}
 	identity, err := s.repo.Identity(ctx, session.IdentityID)
 	if err != nil || identity.Issuer != s.cfg.OAuthIssuer {
+		return fail()
+	}
+	if session.TargetKey != targetKey(identity.Issuer, session.ClientID, identity.Subject, session.ProviderSID) {
 		return fail()
 	}
 	tokens, err := decryptTokens(s.cfg.JWTSecret, id, session.Tokens)
@@ -124,6 +128,11 @@ func (s *Service) Authenticate(ctx context.Context, raw string) (*Claims, error)
 	profile, err := s.userInfo(ctx, tokens.Access, identity.Subject)
 	if err != nil {
 		return fail()
+	}
+	// UserInfo/刷新在网络等待期间，后端通知可能已删除本地会话。
+	current, err := s.repo.Session(ctx, id)
+	if err != nil || !current.ExpiresAt.After(time.Now()) {
+		return nil, ErrInvalidToken
 	}
 	claims.Username = profile.displayName()
 	return claims, nil

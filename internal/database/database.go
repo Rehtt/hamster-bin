@@ -121,6 +121,7 @@ func autoMigrate() error {
 		&models.Task{},
 		&models.OAuthIdentity{},
 		&models.OAuthSession{},
+		&models.OAuthLogout{},
 	)
 }
 

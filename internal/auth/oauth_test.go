@@ -27,7 +27,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-type providerGrant struct{ nonce, challenge, subject string }
+type providerGrant struct{ nonce, challenge, subject, sid string }
 type fakeProvider struct {
 	mu                                                                         sync.Mutex
 	server                                                                     *httptest.Server
@@ -36,7 +36,7 @@ type fakeProvider struct {
 	codes                                                                      map[string]providerGrant
 	refreshes                                                                  map[string]providerGrant
 	accesses                                                                   map[string]string
-	subject, username, email, infoSubject                                      string
+	subject, username, email, infoSubject, sid                                 string
 	infoStatus, tokenStatus                                                    int
 	codeCalls, refreshCalls, infoCalls, revokeCalls, jwksCalls, counter        int
 	modify                                                                     func(jwt.MapClaims)
@@ -49,7 +49,7 @@ func newFakeProvider(t *testing.T, method string) *fakeProvider {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &fakeProvider{key: key, kid: "key-1", method: method, clientID: "hamster: client", secret: "secret:+ /", subject: "stable-user", username: "alice", email: "alice@example.com", infoStatus: 200,
+	p := &fakeProvider{key: key, kid: "key-1", method: method, clientID: "hamster: client", secret: "secret:+ /", subject: "stable-user", sid: "browser-1", username: "alice", email: "alice@example.com", infoStatus: 200,
 		codes: map[string]providerGrant{}, refreshes: map[string]providerGrant{}, accesses: map[string]string{}}
 	p.server = httptest.NewServer(http.HandlerFunc(p.serve))
 	t.Cleanup(p.server.Close)
@@ -128,7 +128,7 @@ func (p *fakeProvider) serve(w http.ResponseWriter, r *http.Request) {
 		access, refresh := fmt.Sprintf("opaque-access-%d", p.counter), fmt.Sprintf("opaque-refresh-%d", p.counter)
 		p.accesses[access] = grant.subject
 		p.refreshes[refresh] = grant
-		claims := jwt.MapClaims{"iss": p.server.URL, "sub": grant.subject, "aud": p.clientID, "iat": time.Now().Unix(), "exp": time.Now().Add(15 * time.Minute).Unix(), "nonce": grant.nonce}
+		claims := jwt.MapClaims{"iss": p.server.URL, "sub": grant.subject, "sid": grant.sid, "aud": p.clientID, "iat": time.Now().Unix(), "exp": time.Now().Add(15 * time.Minute).Unix(), "nonce": grant.nonce}
 		if p.modify != nil {
 			p.modify(claims)
 		}
@@ -192,7 +192,7 @@ func newOAuthFixture(t *testing.T, method string) oauthFixture {
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&models.OAuthIdentity{}, &models.OAuthSession{}); err != nil {
+	if err := db.AutoMigrate(&models.OAuthIdentity{}, &models.OAuthSession{}, &models.OAuthLogout{}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{OAuthEnabled: true, OAuthIssuer: p.server.URL, OAuthClientID: p.clientID, OAuthClientSecret: p.secret, OAuthAuthMethod: method, OAuthRedirectURL: "http://127.0.0.1:5173/api/v1/auth/oauth/callback", JWTSecret: "a-long-random-test-secret-for-jwt", JWTExpireHours: 168}
@@ -219,7 +219,7 @@ func (f oauthFixture) begin(t *testing.T) (string, string) {
 	}
 	f.p.mu.Lock()
 	code := randomValue()
-	f.p.codes[code] = providerGrant{q.Get("nonce"), q.Get("code_challenge"), f.p.subject}
+	f.p.codes[code] = providerGrant{q.Get("nonce"), q.Get("code_challenge"), f.p.subject, f.p.sid}
 	f.p.mu.Unlock()
 	return browser, url.Values{"state": {q.Get("state")}, "code": {code}}.Encode()
 }
@@ -330,6 +330,11 @@ func TestOAuthRejectsInvalidIdentity(t *testing.T) {
 		}},
 		{"iat_missing", func(p *fakeProvider) { p.modify = func(c jwt.MapClaims) { delete(c, "iat") } }},
 		{"subject_empty", func(p *fakeProvider) { p.modify = func(c jwt.MapClaims) { c["sub"] = "" } }},
+		{"sid_missing", func(p *fakeProvider) { p.modify = func(c jwt.MapClaims) { delete(c, "sid") } }},
+		{"sid_empty", func(p *fakeProvider) { p.modify = func(c jwt.MapClaims) { c["sid"] = " " } }},
+		{"logout_event", func(p *fakeProvider) {
+			p.modify = func(c jwt.MapClaims) { c["events"] = map[string]any{logoutEvent: map[string]any{}} }
+		}},
 		{"signature", func(p *fakeProvider) { p.badSignature = true }},
 		{"algorithm", func(p *fakeProvider) { p.badAlgorithm = true }},
 		{"userinfo", func(p *fakeProvider) { p.infoSubject = "different-user" }},
@@ -474,7 +479,7 @@ func TestOAuthRefreshSerializedAndDurable(t *testing.T) {
 }
 
 func TestOAuthRevocationFailureAndInterruptedRefresh(t *testing.T) {
-	for _, name := range []string{"revoked", "unavailable", "subject_changed", "expired_session", "refresh_failed", "refresh_timeout", "refresh_missing", "refresh_subject", "refresh_save_failed", "interrupted", "secret_changed", "ciphertext_changed"} {
+	for _, name := range []string{"revoked", "unavailable", "subject_changed", "expired_session", "refresh_failed", "refresh_timeout", "refresh_missing", "refresh_subject", "refresh_sid", "refresh_sid_missing", "refresh_logout", "refresh_save_failed", "interrupted", "secret_changed", "ciphertext_changed"} {
 		t.Run(name, func(t *testing.T) {
 			f := newOAuthFixture(t, "client_secret_basic")
 			raw, claims := f.login(t)
@@ -501,6 +506,15 @@ func TestOAuthRevocationFailureAndInterruptedRefresh(t *testing.T) {
 				f.expireAccess(t, claims)
 			case "refresh_subject":
 				f.p.modify = func(c jwt.MapClaims) { c["sub"] = "another-user" }
+				f.expireAccess(t, claims)
+			case "refresh_sid":
+				f.p.modify = func(c jwt.MapClaims) { c["sid"] = "another-browser" }
+				f.expireAccess(t, claims)
+			case "refresh_sid_missing":
+				f.p.modify = func(c jwt.MapClaims) { delete(c, "sid") }
+				f.expireAccess(t, claims)
+			case "refresh_logout":
+				f.p.modify = func(c jwt.MapClaims) { c["events"] = map[string]any{logoutEvent: map[string]any{}} }
 				f.expireAccess(t, claims)
 			case "refresh_save_failed":
 				// 网络成功后无法保存，不能恢复或重试旧令牌。

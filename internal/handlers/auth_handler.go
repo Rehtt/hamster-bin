@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"errors"
+	"mime"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Rehtt/hamster-bin/internal/auth"
@@ -146,6 +149,34 @@ func (h *AuthHandler) OAuthLogin(c *gin.Context) {
 	}
 	h.flowCookie(c, browser, int(auth.FlowLifetime/time.Second))
 	c.Redirect(http.StatusFound, location)
+}
+
+func (h *AuthHandler) OAuthBackchannelLogout(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !h.cfg.OAuthEnabled {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	query, queryErr := url.ParseQuery(c.Request.URL.RawQuery)
+	if err != nil || mediaType != "application/x-www-form-urlencoded" || queryErr != nil || query.Has("logout_token") {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	if c.Request.ParseForm() != nil || len(c.Request.PostForm["logout_token"]) != 1 || strings.TrimSpace(c.Request.PostForm.Get("logout_token")) == "" {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BackchannelLogout(c.Request.Context(), c.Request.PostForm.Get("logout_token")); err != nil {
+		if errors.Is(err, auth.ErrOAuthUnavailable) {
+			c.Status(http.StatusServiceUnavailable)
+			return
+		}
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	c.Status(http.StatusOK)
 }
 
 func (h *AuthHandler) OAuthCallback(c *gin.Context) {

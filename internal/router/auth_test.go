@@ -44,11 +44,16 @@ func TestOAuthHTTPFlowAndPasswordCompatibility(t *testing.T) {
 	}
 	var provider *httptest.Server
 	var revoked atomic.Bool
+	var providerUnavailable atomic.Bool
 	var infoCalls atomic.Int32
 	nonce := make(chan string, 4)
 	challenge := make(chan string, 4)
 	provider = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if providerUnavailable.Load() && (r.URL.Path == "/.well-known/openid-configuration" || r.URL.Path == "/jwks") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		send := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 		switch r.URL.Path {
 		case "/.well-known/openid-configuration":
@@ -65,7 +70,7 @@ func TestOAuthHTTPFlowAndPasswordCompatibility(t *testing.T) {
 				w.WriteHeader(400)
 				return
 			}
-			token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": provider.URL, "sub": "user-1", "aud": "client", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix(), "nonce": n})
+			token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": provider.URL, "sub": "user-1", "sid": "browser-1", "aud": "client", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix(), "nonce": n})
 			token.Header["kid"] = "key"
 			signed, _ := token.SignedString(key)
 			send(map[string]any{"access_token": "private-access", "refresh_token": "private-refresh", "id_token": signed, "token_type": "Bearer", "expires_in": 900})
@@ -90,7 +95,7 @@ func TestOAuthHTTPFlowAndPasswordCompatibility(t *testing.T) {
 	}
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
-	if err := db.AutoMigrate(&models.OAuthIdentity{}, &models.OAuthSession{}); err != nil {
+	if err := db.AutoMigrate(&models.OAuthIdentity{}, &models.OAuthSession{}, &models.OAuthLogout{}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{AdminUsername: "admin", AdminPassword: "password", JWTSecret: "test-secret", JWTExpireHours: 168, OAuthEnabled: true, OAuthIssuer: provider.URL, OAuthClientID: "client", OAuthClientSecret: "private-client-secret", OAuthAuthMethod: "client_secret_basic", OAuthRedirectURL: "http://127.0.0.1:5173/api/v1/auth/oauth/callback"}
@@ -185,6 +190,99 @@ func TestOAuthHTTPFlowAndPasswordCompatibility(t *testing.T) {
 	if call("POST", "/api/v1/auth/login", `{"username":"admin","password":"password"}`).Code != 400 || call("GET", "/api/v1/platforms", "", adminCookie).Code != 401 {
 		t.Fatal("password credentials bypass OAuth-only mode")
 	}
+	// 后端通知无需浏览器 Cookie；请求格式错误和数据库故障不能使会话丢失。
+	cfg.AdminPassword = "password"
+	revoked.Store(false)
+	begin = call("GET", "/api/v1/auth/oauth/login", "")
+	location, _ = url.Parse(begin.Header().Get("Location"))
+	q = location.Query()
+	nonce <- q.Get("nonce")
+	challenge <- q.Get("code_challenge")
+	callback = call("GET", "/api/v1/auth/oauth/callback?code=private-code&state="+url.QueryEscape(q.Get("state")), "", cookie(begin, auth.FlowCookieName))
+	activeOAuth := cookie(callback, auth.CookieName)
+	logoutJWT := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": provider.URL, "aud": "client", "sub": "user-1", "sid": "browser-1", "jti": "private-logout-jti",
+		"iat": time.Now().Unix(), "exp": time.Now().Add(2 * time.Minute).Unix(),
+		"events": map[string]any{"http://schemas.openid.net/event/backchannel-logout": map[string]any{}},
+	})
+	logoutJWT.Header["typ"], logoutJWT.Header["kid"] = "logout+jwt", "key"
+	logoutToken, err := logoutJWT.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logoutBody := url.Values{"logout_token": {logoutToken}}.Encode()
+	logoutPath := "/api/v1/auth/oauth/backchannel-logout"
+	formCall := func(path, contentType, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Header.Set("Content-Type", contentType)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		if w.Header().Get("Cache-Control") != "no-store" || len(w.Result().Cookies()) != 0 {
+			t.Fatal("logout response cached or set browser cookie")
+		}
+		return w
+	}
+	for _, tc := range []struct{ name, query, contentType, body string }{
+		{"json", "", "application/json", `{"logout_token":"` + logoutToken + `"}`},
+		{"missing_type", "", "", logoutBody},
+		{"query_only", "?" + logoutBody, "application/x-www-form-urlencoded", ""},
+		{"query_and_body", "?" + logoutBody, "application/x-www-form-urlencoded", logoutBody},
+		{"duplicate", "", "application/x-www-form-urlencoded", logoutBody + "&" + logoutBody},
+		{"empty", "", "application/x-www-form-urlencoded", "logout_token="},
+		{"missing", "", "application/x-www-form-urlencoded", "other=value"},
+		{"whitespace", "", "application/x-www-form-urlencoded", "logout_token=+++"},
+		{"encoding", "", "application/x-www-form-urlencoded", "logout_token=%ZZ"},
+		{"oversize", "", "application/x-www-form-urlencoded", logoutBody + "&padding=" + strings.Repeat("x", 64<<10)},
+		{"invalid_token", "", "application/x-www-form-urlencoded", "logout_token=private-invalid-logout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := formCall(logoutPath+tc.query, tc.contentType, tc.body); w.Code != 400 {
+				t.Fatalf("bad request status: %d", w.Code)
+			}
+		})
+	}
+	providerUnavailable.Store(true)
+	if w := formCall(logoutPath, "application/x-www-form-urlencoded", logoutBody); w.Code != 503 {
+		t.Fatalf("JWKS failure status: %d", w.Code)
+	}
+	// 新 service 尚未缓存发现文档，故障应同样允许通知重试。
+	originalEngine := engine
+	engine = Setup(db, parser.NewParserManager(), cfg, nil)
+	if w := formCall(logoutPath, "application/x-www-form-urlencoded", logoutBody); w.Code != 503 {
+		t.Fatalf("discovery failure status: %d", w.Code)
+	}
+	engine = originalEngine
+	providerUnavailable.Store(false)
+	if err := db.Exec("CREATE TRIGGER fail_logout BEFORE DELETE ON oauth_sessions BEGIN SELECT RAISE(FAIL, 'disk full'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	if w := formCall(logoutPath, "application/x-www-form-urlencoded", logoutBody); w.Code != 503 {
+		t.Fatalf("database failure status: %d", w.Code)
+	}
+	if err := db.Exec("DROP TRIGGER fail_logout").Error; err != nil {
+		t.Fatal(err)
+	}
+	if call("GET", "/api/v1/platforms", "", activeOAuth).Code != 200 {
+		t.Fatal("invalid/failed notification ended session")
+	}
+	for range 2 {
+		if w := formCall(logoutPath, "application/x-www-form-urlencoded; charset=UTF-8", logoutBody); w.Code != 200 {
+			t.Fatalf("logout status: %d", w.Code)
+		}
+	}
+	if revoked.Load() {
+		t.Fatal("backchannel logout revoked offline authorization")
+	}
+	if call("GET", "/api/v1/platforms", "", activeOAuth).Code != 401 {
+		t.Fatal("ended OAuth JWT accepted on business API")
+	}
+	if call("GET", "/api/v1/platforms", "", adminCookie).Code != 200 {
+		t.Fatal("backchannel logout ended password login")
+	}
+	if strings.Contains(logs.String(), logoutToken) || strings.Contains(logs.String(), "private-invalid-logout") {
+		t.Fatal("logout token leaked in logs")
+	}
 	cfg.OAuthRedirectURL = "https://inventory.example.com/api/v1/auth/oauth/callback"
 	begin = call("GET", "/api/v1/auth/oauth/login", "")
 	if !cookie(begin, auth.FlowCookieName).Secure {
@@ -197,6 +295,9 @@ func TestOAuthHTTPFlowAndPasswordCompatibility(t *testing.T) {
 	cfg.OAuthEnabled = false
 	if call("GET", "/api/v1/auth/oauth/login", "").Code != 404 {
 		t.Fatal("disabled OAuth endpoint active")
+	}
+	if w := formCall(logoutPath, "application/x-www-form-urlencoded", logoutBody); w.Code != 404 {
+		t.Fatal("disabled backchannel endpoint active")
 	}
 	// 即使发生 panic，日志也不能输出完整回调查询、Cookie、Authorization 或 panic 值。
 	engine.GET("/panic", func(*gin.Context) { panic("private-panic") })

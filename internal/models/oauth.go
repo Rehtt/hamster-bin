@@ -20,6 +20,8 @@ type OAuthSession struct {
 	ID              string    `gorm:"primaryKey;size:64"`
 	IdentityID      uint      `gorm:"not null;index"`
 	ClientID        string    `gorm:"type:text;not null"`
+	ProviderSID     string    `gorm:"column:provider_sid;type:text"`
+	TargetKey       string    `gorm:"size:64;index"`
 	Tokens          []byte    `gorm:"not null" json:"-"`
 	AccessExpiresAt time.Time `gorm:"not null"`
 	ExpiresAt       time.Time `gorm:"not null;index"`
@@ -28,5 +30,13 @@ type OAuthSession struct {
 	UpdatedAt       time.Time
 }
 
+// OAuthLogout 按提供方会话目标保存结束状态，阻止通知到达后的迟到登录。
+type OAuthLogout struct {
+	TargetKey string    `gorm:"primaryKey;size:64"`
+	ExpiresAt time.Time `gorm:"not null;index"`
+	CreatedAt time.Time
+}
+
 func (OAuthIdentity) TableName() string { return "oauth_identities" }
 func (OAuthSession) TableName() string  { return "oauth_sessions" }
+func (OAuthLogout) TableName() string   { return "oauth_logouts" }

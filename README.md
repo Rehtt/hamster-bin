@@ -245,6 +245,12 @@ export JWT_SECRET='replace-with-a-long-random-secret'
 
 OAuth 身份按 `(iss, sub)` 关联，用户名或邮箱变化不会创建重复身份，也不会按未验证邮箱合并账号。令牌仅在服务端加密持久化，浏览器只保存应用自己的 HttpOnly 会话 Cookie。应用重启后会话可继续使用，但正在进行的授权或刷新需要重新登录。默认七天有效，最长不超过本次授权的 30 天，刷新不会延长本地会话期限；修改 `JWT_SECRET` 会使已有登录失效，也会使已保存的令牌无法解密。
 
+如需同步退出，在 OAuth 管理端的应用设置中登记后端通道退出地址 `https://<库存域名>/api/v1/auth/oauth/backchannel-logout`，例如 `https://inventory.example.com/api/v1/auth/oauth/backchannel-logout`。此地址必须能从 OAuth 服务直接访问，不能依赖浏览器网络或登录 Cookie。用户在统一登录退出页面勾选“同步退出应用”后，本站验证签名通知并结束对应浏览器下的全部 OAuth 本地会话；其他设备、密码登录和 MCP 保持原有行为。页面下次请求收到 401 后跳回登录页，不额外轮询。通知只删除本站会话及保存的令牌，不额外撤销离线授权，也不增加本站主动退出统一登录的流程。
+
+同步退出要求 ID Token 包含已验证的 `sid`；缺失时无法登录，刷新返回 ID Token 时也必须保持原 `sid`。升级会自动迁移会话字段并新增退出记录表，清理没有 `sid` 的旧 OAuth 会话，用户需重新登录。退出记录持久化保留 31 天，防止迟到的登录回调恢复已结束的会话。
+
+通知接口只接收 `application/x-www-form-urlencoded` 请求体中的单个非空 `logout_token`（上限 64 KiB），无需 Cookie，不设置 Cookie，所有响应均为 `Cache-Control: no-store`。有效通知、重复通知和未知会话返回 200，非法请求或令牌返回 400；发现文档、公钥或数据库暂时故障返回 503，OAuth 服务应重试。OAuth 未启用时返回 404。
+
 每次受保护请求都会通过 UserInfo 检查授权，访问令牌即将到期时自动串行刷新。停用用户、移除分配或撤销授权后，下次请求会退出登录；统一登录服务不可用或检查失败时同样拒绝访问并清除本地会话。密码登录和 MCP 不依赖 OAuth 在线检查。退出本站会清除本地会话并尝试撤销该次授权，不会退出统一登录站点或其他应用。
 
 生产使用 HTTPS；反向代理终止 HTTPS 时，`OAUTH_REDIRECT_URL` 仍填写外部 HTTPS 地址，以便正确设置 Secure Cookie。应用与前端需通过同一站点访问。开发时可在管理端登记 `http://127.0.0.1:5173/api/v1/auth/oauth/callback`，浏览器访问 `http://127.0.0.1:5173`，由现有 Vite `/api` 代理转发到后端；使用嵌入式前端时改用后端实际地址。回调协议、域名、端口、路径必须与登记值完全一致，不支持附加查询参数。反向代理日志也应过滤回调查询、Cookie 和认证头。
@@ -353,7 +359,7 @@ go test . ./cmd/... ./internal/...
 
 后端 API 前缀为 `/api/v1`。主要资源包括：
 
-- `/api/v1/auth/*`：登录方式配置（`GET /config`）、密码登录、OAuth 发起/回调（`GET /oauth/login`、`GET /oauth/callback`）、退出登录和当前用户状态（含 `auth_method`）。
+- `/api/v1/auth/*`：登录方式配置（`GET /config`）、密码登录、OAuth 发起/回调（`GET /oauth/login`、`GET /oauth/callback`）、后端通道同步退出（`POST /oauth/backchannel-logout`）、退出登录和当前用户状态（含 `auth_method`）。
 - `/api/v1/categories`：分类管理。
 - `/api/v1/suppliers`：供应商管理。
 - `/api/v1/components`：元件列表、创建、更新、删除、导出和库存操作。

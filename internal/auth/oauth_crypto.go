@@ -36,6 +36,11 @@ func identityKey(issuer, subject string) string {
 	return digest(string(encoded))
 }
 
+func targetKey(issuer, clientID, subject, sid string) string {
+	encoded, _ := json.Marshal([4]string{issuer, clientID, subject, sid})
+	return digest(string(encoded))
+}
+
 func tokenCipher(secret string) (cipher.AEAD, error) {
 	key, err := hkdf.Key(sha256.New, []byte(secret), nil, "hamster-bin/oauth-tokens/v1", 32)
 	if err != nil {

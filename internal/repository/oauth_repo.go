@@ -12,10 +12,22 @@ import (
 
 type OAuthRepository struct{ db *gorm.DB }
 
+var ErrOAuthSessionEnded = errors.New("oauth session ended")
+var ErrOAuthIDExpired = errors.New("oauth ID token expired")
+
+const OAuthLogoutRetention = 31 * 24 * time.Hour
+
 func NewOAuthRepository(db *gorm.DB) *OAuthRepository { return &OAuthRepository{db: db} }
 
-func (r *OAuthRepository) CreateLogin(ctx context.Context, identity *models.OAuthIdentity, session *models.OAuthSession) error {
+func (r *OAuthRepository) CreateLogin(ctx context.Context, identity *models.OAuthIdentity, session *models.OAuthSession, idExpiry time.Time) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ended int64
+		if err := tx.Model(&models.OAuthLogout{}).Where("target_key = ? AND expires_at > ?", session.TargetKey, time.Now()).Count(&ended).Error; err != nil {
+			return err
+		}
+		if ended != 0 || session.ProviderSID == "" || session.TargetKey == "" {
+			return ErrOAuthSessionEnded
+		}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},
 			DoUpdates: clause.AssignmentColumns([]string{"username", "name", "email", "updated_at"}),
@@ -30,7 +42,25 @@ func (r *OAuthRepository) CreateLogin(ctx context.Context, identity *models.OAut
 			return errors.New("identity mismatch")
 		}
 		session.IdentityID = stored.ID
+		if !idExpiry.After(time.Now()) {
+			return ErrOAuthIDExpired
+		}
 		return tx.Create(session).Error
+	})
+}
+
+// EndTarget 与登录落库由 service 的同一目标锁保护；记录和删除必须一起提交。
+func (r *OAuthRepository) EndTarget(ctx context.Context, target string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		if err := tx.Where("expires_at <= ?", now).Delete(&models.OAuthLogout{}).Error; err != nil {
+			return err
+		}
+		row := models.OAuthLogout{TargetKey: target, ExpiresAt: now.Add(OAuthLogoutRetention)}
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "target_key"}}, DoUpdates: clause.AssignmentColumns([]string{"expires_at"})}).Create(&row).Error; err != nil {
+			return err
+		}
+		return tx.Where("target_key = ?", target).Delete(&models.OAuthSession{}).Error
 	})
 }
 
@@ -66,7 +96,7 @@ func (r *OAuthRepository) CompleteRefresh(ctx context.Context, session *models.O
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errors.New("session unavailable")
+		return ErrOAuthSessionEnded
 	}
 	return nil
 }
@@ -76,9 +106,14 @@ func (r *OAuthRepository) DeleteSession(ctx context.Context, id string) error {
 }
 
 func (r *OAuthRepository) Cleanup(ctx context.Context, interrupted bool) error {
-	query := r.db.WithContext(ctx).Where("expires_at <= ?", time.Now())
-	if interrupted {
-		query = query.Or("refreshing = ?", true)
-	}
-	return query.Delete(&models.OAuthSession{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Where("expires_at <= ?", time.Now()).Or("provider_sid IS NULL OR provider_sid = '' OR target_key IS NULL OR target_key = ''")
+		if interrupted {
+			query = query.Or("refreshing = ?", true)
+		}
+		if err := query.Delete(&models.OAuthSession{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("expires_at <= ?", time.Now()).Delete(&models.OAuthLogout{}).Error
+	})
 }
