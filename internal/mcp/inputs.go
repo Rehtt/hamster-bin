@@ -96,7 +96,12 @@ type StatsInput struct {
 }
 type CreateCategoryInput struct {
 	Name     string `json:"name" jsonschema:"分类名称，不能为空"`
-	ParentID *uint  `json:"parent_id,omitempty" jsonschema:"已存在的父分类 ID，不填表示顶级分类"`
+	ParentID *uint  `json:"parent_id,omitempty" jsonschema:"已存在的父分类 ID，不填或 0 表示顶级分类"`
+}
+type UpdateCategoryInput struct {
+	IDInput
+	Name     *string `json:"name,omitempty" jsonschema:"分类名称，去除首尾空白后不能为空；省略或 null 保持原值"`
+	ParentID *uint   `json:"parent_id,omitempty" jsonschema:"已存在的父分类 ID；0 表示移为顶级分类，省略或 null 保持原值；不能是自身或后代"`
 }
 type CreateSupplierInput struct {
 	Name string `json:"name" jsonschema:"供应商名称，不能为空；同名时返回已有供应商"`

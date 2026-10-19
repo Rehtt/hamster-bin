@@ -334,10 +334,10 @@ export MCP_TOKEN='replace-with-a-long-random-secret'
 | 元件 | `list_components`、`get_component`、`create_component`、`update_component` |
 | 入出库 | `change_stock` |
 | 预入库 | `list_pre_stocks`、`get_pre_stock`、`create_pre_stock`、`update_pre_stock`、`confirm_pre_stock` |
-| 分类与供应商 | `list_categories`、`create_category`、`list_suppliers`、`create_supplier` |
+| 分类与供应商 | `list_categories`、`create_category`、`update_category`、`delete_category`、`list_suppliers`、`create_supplier` |
 | 流水与统计 | `list_stock_logs`、`get_component_stock_logs`、`get_stats` |
 
-工具参数包含中文说明和读写标记，返回 `structuredContent` 及相同 JSON 的文本内容；结果包含 `data`，分页结果还包含 `pagination`。业务失败通过 MCP `isError` 返回。删除、撤销、批量操作、平台解析和后台任务不对 MCP 开放。
+共 19 个工具。工具参数包含中文说明和读写标记，返回 `structuredContent` 及相同 JSON 的文本内容；结果包含 `data`，分页结果还包含 `pagination`。业务失败通过 MCP `isError` 返回。仅支持删除空分类；其他删除、撤销、批量操作、平台解析和后台任务不对 MCP 开放。
 
 调用顺序示例（以下为 `tools/call` 的参数）：
 
@@ -353,6 +353,17 @@ export MCP_TOKEN='replace-with-a-long-random-secret'
 实际使用前两次调用返回的分类、供应商 ID，以及创建元件返回的 ID。创建元件必须传 `name`、`category_id`、非负 `stock_quantity`；创建预入库改传非负 `expected_quantity`。采购总价 `total_price_cents` 使用整数分，返回单价 `unit_price_micro` 使用微元（1 元 = 1,000,000 微元）；数量为零时不得填写正数总价。
 
 编辑仅更新传入字段，省略字段保持原值；空字符串清除文本，`supplier_id: 0` 解除供应商关联。元件编辑不接受库存数量或参考单价。库存通过 `change_stock` 的 `amount` 修改，正数入库、负数出库，禁止为零；入库可填写非负总价，出库成本自动计算。预入库确认会创建正式元件及现有规则要求的流水，已确认记录不可再次确认或编辑。
+
+分类修改和删除参数：
+
+| 工具 | 参数 | 成功结果中的 `data` |
+| :--- | :--- | :--- |
+| `update_category` | 必填正数 `id`；可选 `name`、`parent_id` | 更新后的分类 |
+| `delete_category` | 必填正数 `id` | `{id, message: "删除成功"}` |
+
+`update_category` 仅更新传入字段，只传 `id` 返回原记录；省略或 `null` 保留原值。名称去除首尾空白后不能为空；`parent_id: 0` 移为顶级分类，正数指定已存在的父分类，不能指定自身、后代或含循环的父链。`create_category` 使用相同名称和层级校验，省略或 `parent_id: 0` 创建顶级分类。两个修改、删除工具均标记为写操作和破坏性操作。
+
+分类关联元件（包括零库存）、任意状态的预入库记录（包括待入库和已确认）或子分类时拒绝删除，并返回具体原因；不会自动迁移或级联删除关联记录。示例：`{"name":"update_category","arguments":{"id":1,"name":"贴片电阻","parent_id":0}}`；删除空分类：`{"name":"delete_category","arguments":{"id":2}}`。
 
 分页默认第 1 页、每页 20 条，每页上限 100；单元件流水默认最近 50 条，上限 100。元件搜索与 REST 使用相同的分字段、空格分词和排序规则；预入库默认 `pending`（可选 `confirmed`、`all`），统计默认 `month`（可选 `quarter`、`all`）。
 
@@ -401,6 +412,8 @@ go test . ./cmd/... ./internal/...
 - `/api/v1/stats`：仪表盘统计数据。
 - `/api/v1/tasks`：后台任务提交（POST，返回 202）、照片 multipart 提交（`/image`）、分页查询（GET，支持 `status`、`type`）；`/:id` 查询详情，`/:id/image` 获取任务照片，`/:id/cancel` 取消，`/:id/retry` 新建重试任务（POST，返回 202）。
 - `/api/v1/platforms`：可用解析平台。
+
+分类创建、修改会校验名称和父分类层级，修改支持只传部分字段。`DELETE /api/v1/categories/:id` 仅删除没有元件（含零库存）、任意状态预入库记录及子分类的空分类；无效 ID 返回 400，不存在返回 404，关联冲突返回 409，数据库异常返回 500，成功响应仍为 `{"message":"删除成功"}`。
 
 任务提交示例：`{"type":"component_parse","input":{"code":"C2040","use_llm":false},"source":"components"}`。扫码使用 `qrcode_parse` 和 `input.qrcode_data`；照片使用 `/api/v1/tasks/image` 上传 JPEG/PNG（不超过 10 MiB），复用 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，模型需支持图片输入；`source` 可为 `components` 或 `pre-stocks`，编辑记录可带 `record_id`。旧 `/components/parse`、`/components/parse-qrcode` 仍保持同步接口。
 

@@ -155,7 +155,7 @@ func TestSDKWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := map[string]bool{"list_components": true, "get_component": true, "create_component": false, "update_component": false, "change_stock": false, "list_pre_stocks": true, "get_pre_stock": true, "create_pre_stock": false, "update_pre_stock": false, "confirm_pre_stock": false, "list_categories": true, "create_category": false, "list_suppliers": true, "create_supplier": false, "list_stock_logs": true, "get_component_stock_logs": true, "get_stats": true}
+	expected := map[string]bool{"list_components": true, "get_component": true, "create_component": false, "update_component": false, "change_stock": false, "list_pre_stocks": true, "get_pre_stock": true, "create_pre_stock": false, "update_pre_stock": false, "confirm_pre_stock": false, "list_categories": true, "create_category": false, "update_category": false, "delete_category": false, "list_suppliers": true, "create_supplier": false, "list_stock_logs": true, "get_component_stock_logs": true, "get_stats": true}
 	if len(tools.Tools) != len(expected) {
 		t.Fatalf("tools=%d", len(tools.Tools))
 	}
@@ -181,6 +181,32 @@ func TestSDKWorkflow(t *testing.T) {
 		dataSchema := properties["data"].(map[string]any)
 		if len(dataSchema) != 1 || dataSchema["description"] != "工具返回的数据，结构取决于具体工具" {
 			t.Fatalf("data schema must describe unrestricted values %s: %v", tool.Name, dataSchema)
+		}
+		if tool.Name == "update_category" || tool.Name == "delete_category" {
+			if tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
+				t.Fatalf("category mutation annotations: %+v", tool.Annotations)
+			}
+			if fmt.Sprint(schema["required"]) != "[id]" {
+				t.Fatalf("category mutation required fields: %v", schema["required"])
+			}
+			properties := schema["properties"].(map[string]any)
+			wantFields := 1
+			if tool.Name == "update_category" {
+				wantFields = 3
+			}
+			if len(properties) != wantFields || properties["id"].(map[string]any)["type"] != "integer" {
+				t.Fatalf("category mutation schema: %v", schema)
+			}
+			for name, property := range properties {
+				if property.(map[string]any)["description"] == "" {
+					t.Fatalf("missing parameter description: %s", name)
+				}
+			}
+			if tool.Name == "update_category" {
+				if properties["name"] == nil || properties["parent_id"] == nil {
+					t.Fatalf("missing category patch fields: %v", schema)
+				}
+			}
 		}
 		if tool.Name == "create_component" {
 			required := fmt.Sprint(schema["required"])
@@ -477,4 +503,75 @@ func TestLegacyHandshakeAndPagination(t *testing.T) {
 	if n := len(decode[[]models.StockLog](t, call(t, s, "get_component_stock_logs", map[string]any{"id": components[0].ID, "limit": 1000}, false))); n != 100 {
 		t.Fatalf("log cap: %d", n)
 	}
+}
+
+func TestSDKCategoryMutations(t *testing.T) {
+	db, server := setup(t, true)
+	s := connect(t, server, "")
+	root := decode[models.Category](t, call(t, s, "create_category", map[string]any{"name": "根"}, false))
+	child := decode[models.Category](t, call(t, s, "create_category", map[string]any{"name": "子", "parent_id": root.ID}, false))
+	other := decode[models.Category](t, call(t, s, "create_category", map[string]any{"name": "另一根", "parent_id": 0}, false))
+	updated := decode[models.Category](t, call(t, s, "update_category", map[string]any{"id": child.ID, "name": " 新名称 "}, false))
+	if updated.Name != "新名称" || updated.ParentID == nil || *updated.ParentID != root.ID {
+		t.Fatalf("rename: %+v", updated)
+	}
+	updated = decode[models.Category](t, call(t, s, "update_category", map[string]any{"id": child.ID, "parent_id": other.ID}, false))
+	if updated.Name != "新名称" || updated.ParentID == nil || *updated.ParentID != other.ID {
+		t.Fatalf("move: %+v", updated)
+	}
+	for _, args := range []map[string]any{{"id": child.ID}, {"id": child.ID, "name": nil, "parent_id": nil}} {
+		updated = decode[models.Category](t, call(t, s, "update_category", args, false))
+		if updated.Name != "新名称" || updated.ParentID == nil || *updated.ParentID != other.ID {
+			t.Fatalf("omission/null: %+v", updated)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"update_category", map[string]any{}},
+		{"delete_category", map[string]any{}},
+		{"update_category", map[string]any{"id": 0}},
+		{"delete_category", map[string]any{"id": 0}},
+		{"update_category", map[string]any{"id": -1}},
+		{"delete_category", map[string]any{"id": -1}},
+		{"update_category", map[string]any{"id": 9999}},
+		{"delete_category", map[string]any{"id": 9999}},
+		{"update_category", map[string]any{"id": child.ID, "name": " "}},
+		{"update_category", map[string]any{"id": child.ID, "parent_id": 9999}},
+		{"update_category", map[string]any{"id": child.ID, "parent_id": -1}},
+		{"update_category", map[string]any{"id": child.ID, "parent_id": child.ID}},
+		{"update_category", map[string]any{"id": other.ID, "parent_id": child.ID}},
+		{"update_category", map[string]any{"id": child.ID, "stock_quantity": 0}},
+		{"delete_category", map[string]any{"id": other.ID}},
+	} {
+		call(t, s, tc.name, tc.args, true)
+	}
+	updated = decode[models.Category](t, call(t, s, "update_category", map[string]any{"id": child.ID, "parent_id": 0}, false))
+	if updated.Name != "新名称" || updated.ParentID != nil {
+		t.Fatalf("clear parent: %+v", updated)
+	}
+	deleted := decode[struct {
+		ID      uint   `json:"id"`
+		Message string `json:"message"`
+	}](t, call(t, s, "delete_category", map[string]any{"id": child.ID}, false))
+	if deleted.ID != child.ID || deleted.Message != "删除成功" {
+		t.Fatalf("delete result: %+v", deleted)
+	}
+	call(t, s, "delete_category", map[string]any{"id": child.ID}, true)
+	call(t, s, "update_category", map[string]any{"id": child.ID, "name": "不能重建"}, true)
+	// 零库存与已确认预入库分别阻止删除；业务错误通过 isError 返回。
+	call(t, s, "create_component", map[string]any{"name": "零库存", "category_id": root.ID, "stock_quantity": 0}, false)
+	call(t, s, "delete_category", map[string]any{"id": root.ID}, true)
+	pre := models.PreStock{Name: "已确认", CategoryID: other.ID, Status: "confirmed"}
+	if err := db.Create(&pre).Error; err != nil {
+		t.Fatal(err)
+	}
+	call(t, s, "delete_category", map[string]any{"id": other.ID}, true)
+	// 历史循环必须终止并报告工具错误。
+	if err := db.Model(&models.Category{}).Where("id = ?", root.ID).Update("parent_id", root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	call(t, s, "update_category", map[string]any{"id": other.ID, "parent_id": root.ID}, true)
+	call(t, s, "create_category", map[string]any{"name": "循环", "parent_id": root.ID}, true)
 }

@@ -158,24 +158,22 @@ func newServer(db *gorm.DB) *sdk.Server {
 		return data(repository.NewCategoryRepository(db).GetAll())
 	})
 	register(s, db, "create_category", "创建分类，可关联已存在的父分类。", false, false, func(db *gorm.DB, in CreateCategoryInput) (result, error) {
-		in.Name = strings.TrimSpace(in.Name)
-		if in.Name == "" {
-			return result{}, fmt.Errorf("分类名称不能为空")
-		}
 		c := models.Category{Name: in.Name, ParentID: in.ParentID}
-		err := db.Transaction(func(tx *gorm.DB) error {
-			repo := repository.NewCategoryRepository(tx)
-			if in.ParentID != nil {
-				if err := validID(*in.ParentID); err != nil {
-					return err
-				}
-				if _, err := repo.GetByID(*in.ParentID); err != nil {
-					return fmt.Errorf("父分类不存在或无法读取: %w", err)
-				}
-			}
-			return repo.Create(&c)
-		})
+		err := repository.NewCategoryRepository(db).Create(&c)
 		return data(c, err)
+	})
+	register(s, db, "update_category", "按 ID 局部修改分类名称或父分类；省略或 null 保留原值，parent_id=0 移为顶级分类；禁止自身、后代引用及循环。", false, true, func(db *gorm.DB, in UpdateCategoryInput) (result, error) {
+		if err := validID(in.ID); err != nil {
+			return result{}, err
+		}
+		return data(repository.NewCategoryRepository(db).Update(in.ID, repository.CategoryPatch{Name: in.Name, ParentID: in.ParentID}))
+	})
+	register(s, db, "delete_category", "按 ID 删除空分类；关联元件（包括零库存）、任意状态的预入库记录或子分类时拒绝删除，不迁移或级联删除关联数据。", false, true, func(db *gorm.DB, in IDInput) (result, error) {
+		if err := validID(in.ID); err != nil {
+			return result{}, err
+		}
+		err := repository.NewCategoryRepository(db).Delete(in.ID)
+		return data(map[string]any{"id": in.ID, "message": "删除成功"}, err)
 	})
 	register(s, db, "list_suppliers", "按名称查询全部供应商。", true, false, func(db *gorm.DB, _ EmptyInput) (result, error) {
 		return data(repository.NewSupplierRepository(db).GetAll())
