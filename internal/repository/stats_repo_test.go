@@ -15,6 +15,11 @@ func setupStatsTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.AutoMigrate(&models.Category{}, &models.Component{}, &models.StockLog{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -173,6 +178,70 @@ func TestStatsRepositoryGetDashboardStatsMonth(t *testing.T) {
 	}
 	if stats.RangeStart == nil || stats.RangeEnd == nil {
 		t.Fatal("range_start and range_end should be set for month")
+	}
+}
+
+func TestStatsRepositoryInventoryValueCents(t *testing.T) {
+	tests := []struct {
+		name       string
+		components []models.Component
+		want       int64
+	}{
+		{name: "empty inventory"},
+		{
+			name: "less than one cent",
+			components: []models.Component{
+				{Name: "A", StockQuantity: 3, UnitPriceMicro: 3333},
+			},
+		},
+		{
+			name: "sum before converting to cents",
+			components: []models.Component{
+				{Name: "A", StockQuantity: 1, UnitPriceMicro: 6000},
+				{Name: "B", StockQuantity: 1, UnitPriceMicro: 6000},
+			},
+			want: 1,
+		},
+		{
+			name: "truncate fractional cent after summing",
+			components: []models.Component{
+				{Name: "A", StockQuantity: 3, UnitPriceMicro: 333333},
+				{Name: "B", StockQuantity: 1, UnitPriceMicro: 6001},
+			},
+			want: 100,
+		},
+		{
+			name: "exclude nonpositive stock and prices",
+			components: []models.Component{
+				{Name: "A", StockQuantity: 2, UnitPriceMicro: 10000},
+				{Name: "B", StockQuantity: 0, UnitPriceMicro: 1000000},
+				{Name: "C", StockQuantity: 100, UnitPriceMicro: 0},
+				{Name: "D", StockQuantity: -1, UnitPriceMicro: 10000},
+				{Name: "E", StockQuantity: 1, UnitPriceMicro: -10000},
+			},
+			want: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupStatsTestDB(t)
+			if len(tt.components) > 0 {
+				if err := db.Create(&tt.components).Error; err != nil {
+					t.Fatalf("create components: %v", err)
+				}
+			}
+			stats, err := NewStatsRepository(db).GetDashboardStats(StatsRangeAll)
+			if err != nil {
+				t.Fatalf("GetDashboardStats: %v", err)
+			}
+			if stats.InventoryValueCents != tt.want {
+				t.Fatalf("inventory_value_cents = %d, want %d", stats.InventoryValueCents, tt.want)
+			}
+			if len(tt.components) == 0 && (stats.ComponentCount != 0 || stats.CategoryCount != 0 ||
+				stats.TotalStock != 0 || stats.InboundQuantity != 0 || stats.OutboundQuantity != 0 || stats.InboundCostCents != 0) {
+				t.Fatalf("expected empty inventory statistics, got %+v", stats)
+			}
+		})
 	}
 }
 

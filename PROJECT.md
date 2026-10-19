@@ -153,6 +153,17 @@ make build
 go build -ldflags="-s -w -X github.com/Rehtt/hamster-bin/internal/version.Version=v1.0.0" -trimpath -o hamster-bin cmd/server/main.go
 ```
 
+后端验证按顺序执行 `go fix ./...`、`go fmt ./...`、`go test . ./cmd/... ./internal/...`。统计查询边界测试使用 `go test ./internal/repository -run 'TestStatsRepository' -v`，覆盖空库存、不足一分、汇总后换算和库存/价格过滤。
+
+`internal/repository/stats_repo_mysql_test.go` 提供可选 MySQL 集成测试，覆盖空库存及有库存时的本月、本季、全部统计。测试专用环境变量 `TEST_MYSQL_DSN` 必须指向已创建、名称以 `_test` 结尾的隔离数据库；连接账号须有创建临时表的权限。测试固定单连接，仅创建会话临时表，关闭连接后自动清理，不运行应用迁移；未设置 DSN 时明确跳过。这不是运行时配置项。
+
+```bash
+TEST_MYSQL_DSN='user:password@tcp(127.0.0.1:3306)/hamster_bin_test?charset=utf8mb4&parseTime=True&loc=Local' go test ./internal/repository -run '^TestStatsRepositoryMySQL$' -count=1 -v
+# 保留工作区已有二进制时，将构建输出写入临时目录
+build_dir=$(mktemp -d)
+make build BUILD_DIR="$build_dir"
+```
+
 版本查看：
 
 ```bash
@@ -250,7 +261,7 @@ docker compose down
 - `POST /api/v1/components/:id/backfill-price` 补录价格；请求体为 `{ "total_price_cents": 1234, "quantity": 100 }`，`total_price_cents` 与 `quantity` 均须大于 0。按采购数量分摊本批单价；无参考单价时直接设为 `round(total_price_cents×10000/quantity)`，已有参考单价时按当前库存与本次采购数量加权平均更新 `unit_price_micro`（不改库存）。写入一条 `change_amount=0`、reason 形如「补录价格（采购 N 件）」的 `StockLog`。前端入口为元件列表行操作菜单「补录价格」，不在编辑表单中补录。
 - `POST /api/v1/components/:id/stock` 请求体为 `{ "amount": 10, "reason": "采购", "total_price_cents": 1234 }`；`amount` 正数为入库、负数为出库。入库且 `total_price_cents > 0` 时写入分摊单价与总价到流水，并按加权平均更新元件 `unit_price_micro`；出库无需传价，若元件有参考单价则自动写入出库成本到流水。库存更新与流水写入在同一事务中完成。
 - `POST /api/v1/stock-logs/:id/revoke` 无请求体，用于撤销指定库存记录。服务端在事务中标记原记录 `revoked_at`、回滚库存并写入一条反向冲销流水（`reversal_of_id` 指向原记录）；撤销入库且原记录有总价时会反算回退元件 `unit_price_micro`。撤销入库时若当前库存不足则返回 `400`；已撤销记录或冲销流水再次撤销亦返回 `400`。成功响应示例 `{ "data": { "original": { ... }, "reversal": { ... } } }`。
-- `GET /api/v1/stats` 返回仪表盘聚合统计。可选 query：`range`（`month` | `quarter` | `all`，默认 `month`）。响应 `data` 含：`range`、`range_start` / `range_end`（`all` 时 `range_start` 为 null）、`component_count`、`category_count`、`total_stock`、`inventory_value_cents`（当前库存 `round(stock_quantity×unit_price_micro/10000)` 之和，仅统计有库存且有参考单价的元件）、`inbound_quantity`、`outbound_quantity`、`inbound_cost_cents`（后三项按 `range` 过滤 `stock_logs.created_at`，且排除 `revoked_at` 非空、`reversal_of_id` 非空及 `change_amount=0` 的补录价格记录；入库数量与金额为 `change_amount > 0`，出库数量为 `change_amount < 0` 的绝对值之和）。
+- `GET /api/v1/stats` 返回仪表盘聚合统计。可选 query：`range`（`month` | `quarter` | `all`，默认 `month`）。响应 `data` 含：`range`、`range_start` / `range_end`（`all` 时 `range_start` 为 null）、`component_count`、`category_count`、`total_stock`、`inventory_value_cents`（仅统计 `stock_quantity > 0` 且 `unit_price_micro > 0` 的元件，SQL 汇总 `SUM(stock_quantity×unit_price_micro)` 微元总额，空库存取 0；Go 使用 `price.MicroPerCent` 整数除法换算为分，先汇总再舍去不足一分的部分，避免 MySQL SQL 除法产生小数而无法扫描到整数）、`inbound_quantity`、`outbound_quantity`、`inbound_cost_cents`（后三项按 `range` 过滤 `stock_logs.created_at`，且排除 `revoked_at` 非空、`reversal_of_id` 非空及 `change_amount=0` 的补录价格记录；入库数量与金额为 `change_amount > 0`，出库数量为 `change_amount < 0` 的绝对值之和）。
 - 前端全局库存记录页（`/logs`）与元件管理页的库存记录弹窗均支持撤销操作；已撤销记录显示「已撤销」标签并降低透明度，冲销流水显示「撤销冲销」标签。
 
 ## OAuth 身份与会话约束

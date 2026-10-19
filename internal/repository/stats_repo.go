@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
 )
 
@@ -70,12 +71,13 @@ func (r *StatsRepository) GetDashboardStats(rangeKey string) (*DashboardStats, e
 
 	var valueSum sumResult
 	if err := r.db.Table("components").
-		Select("COALESCE(SUM(stock_quantity * unit_price_micro), 0) / 10000 AS total").
+		Select("COALESCE(SUM(stock_quantity * unit_price_micro), 0) AS total").
 		Where("stock_quantity > 0 AND unit_price_micro > 0").
 		Scan(&valueSum).Error; err != nil {
 		return nil, err
 	}
-	stats.InventoryValueCents = valueSum.Total
+	// 先汇总微元，再舍去不足一分的部分，避免 MySQL 除法产生小数而无法扫描到整数。
+	stats.InventoryValueCents = valueSum.Total / price.MicroPerCent
 
 	logQuery := r.db.Table("stock_logs").
 		Where("revoked_at IS NULL AND reversal_of_id IS NULL AND change_amount != 0")
