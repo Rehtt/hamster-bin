@@ -61,6 +61,7 @@ type Service struct {
 	workers      int
 	timeout      time.Duration
 	pollInterval time.Duration
+	lifecycle    sync.Mutex // 提交、重试、删除和照片引用检查共用，网络解析不持锁。
 	mu           sync.Mutex // 领取/注册上下文与取消串行化，消除取消早于注册的竞态。
 	wake         chan struct{}
 	work         chan *models.Task
@@ -128,6 +129,12 @@ func (s *Service) Validate(req Request) error {
 	return s.manager.Validate(code, parser.ParseOptions{ParseMode: req.Input.ParseMode, UseLLM: req.Input.UseLLM})
 }
 func (s *Service) Submit(req Request, retryOf *uint) (*models.Task, error) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	return s.submit(req, retryOf)
+}
+
+func (s *Service) submit(req Request, retryOf *uint) (*models.Task, error) {
 	if err := s.Validate(req); err != nil {
 		return nil, err
 	}
@@ -144,6 +151,8 @@ func (s *Service) Submit(req Request, retryOf *uint) (*models.Task, error) {
 	return t, nil
 }
 func (s *Service) Retry(id uint) (*models.Task, error) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	t, err := s.Repo.Get(id)
 	if err != nil {
 		return nil, err
@@ -155,7 +164,7 @@ func (s *Service) Retry(id uint) (*models.Task, error) {
 	if err := json.Unmarshal(t.Input, &input); err != nil {
 		return nil, err
 	}
-	return s.Submit(Request{Type: t.Type, Input: input, Source: t.Source, RecordID: t.RecordID}, &id)
+	return s.submit(Request{Type: t.Type, Input: input, Source: t.Source, RecordID: t.RecordID}, &id)
 }
 func (s *Service) Cancel(id uint) error {
 	s.mu.Lock()

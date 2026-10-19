@@ -73,6 +73,51 @@ func TestTaskAPIAndLegacyCompatibility(t *testing.T) {
 	call("POST", "/api/v1/tasks/1/cancel", "", 200)
 	call("POST", "/api/v1/tasks/1/cancel", "", 409)
 	call("POST", "/api/v1/tasks/1/retry", "", 202)
+
+	call("DELETE", "/api/v1/tasks/bad", "", 400)
+	call("DELETE", "/api/v1/tasks/999", "", 404)
+	call("DELETE", "/api/v1/tasks/2", "", 409)
+	deleted := call("DELETE", "/api/v1/tasks/1", "", 200)
+	var cleanup tasks.DeleteResult
+	if err := json.Unmarshal(deleted["data"], &cleanup); err != nil {
+		t.Fatal(err)
+	}
+	if cleanup.DeletedCount != 1 || len(cleanup.DeletedIDs) != 1 || cleanup.DeletedIDs[0] != 1 {
+		t.Fatalf("delete response: %s", deleted["data"])
+	}
+	call("GET", "/api/v1/tasks/1", "", 404)
+	call("GET", "/api/v1/tasks/2", "", 200)
+	for _, invalid := range []string{
+		`{}`, `{"mode":"unknown"}`, `{"mode":"selected"}`, `{"mode":"selected","ids":[]}`,
+		`{"mode":"selected","ids":null}`, `{"mode":"selected","ids":[0]}`, `{"mode":"selected","ids":[-1]}`,
+		`{"mode":"selected","ids":[1.5]}`, `{"mode":"selected","ids":["1"]}`, `{"mode":"selected","ids":[null]}`,
+		`{"mode":"selected","ids":[4294967296]}`, `{"mode":"all","ids":[1]}`, `{"mode":"failed","ids":[]}`,
+		`{"mode":"older_than_7_days","ids":null}`,
+	} {
+		call("POST", "/api/v1/tasks/batch-delete", invalid, 400)
+	}
+	tooMany, _ := json.Marshal(tasks.DeleteRequest{Mode: "selected", IDs: make([]uint, 101)})
+	call("POST", "/api/v1/tasks/batch-delete", string(tooMany), 400)
+	for _, mode := range []string{"selected", "failed", "all", "older_than_7_days"} {
+		body := `{"mode":"` + mode + `"}`
+		if mode == "selected" {
+			body = `{"mode":"selected","ids":[2,2,999,999]}`
+		}
+		res := call("POST", "/api/v1/tasks/batch-delete", body, 200)
+		if err := json.Unmarshal(res["data"], &cleanup); err != nil {
+			t.Fatal(err)
+		}
+		wantSkipped := 0
+		if mode == "selected" {
+			wantSkipped = 2
+		}
+		if mode == "all" {
+			wantSkipped = 1
+		}
+		if cleanup.DeletedCount != 0 || cleanup.SkippedCount != wantSkipped || cleanup.DeletedIDs == nil {
+			t.Fatalf("%s: %s", mode, res["data"])
+		}
+	}
 	// 旧客户端继续同步返回原有 data 结构。
 	old := call("POST", "/api/v1/components/parse", `{"code":"123456789012"}`, 200)
 	var info parser.ComponentInfo
@@ -103,11 +148,17 @@ func TestTaskAPIAndLegacyCompatibility(t *testing.T) {
 			t.Fatalf("unprotected %s: %d", path, w.Code)
 		}
 	}
-	for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/1/cancel", "/api/v1/tasks/1/retry"} {
+	for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/1/cancel", "/api/v1/tasks/1/retry", "/api/v1/tasks/batch-delete"} {
 		w := httptest.NewRecorder()
 		protected.ServeHTTP(w, httptest.NewRequest("POST", path, bytes.NewBufferString(body)))
 		if w.Code != 401 {
 			t.Fatalf("unprotected %s: %d", path, w.Code)
 		}
 	}
+	w := httptest.NewRecorder()
+	protected.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/v1/tasks/1", nil))
+	if w.Code != 401 {
+		t.Fatalf("unprotected delete: %d", w.Code)
+	}
+
 }

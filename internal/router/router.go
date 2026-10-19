@@ -84,6 +84,8 @@ func Setup(db *gorm.DB, parserManager *parser.ParserManager, cfg *config.Config,
 			taskRoutes.POST("", taskHandler.Create)
 			taskRoutes.POST("/image", taskHandler.CreateImage)
 			taskRoutes.GET("", taskHandler.List)
+			taskRoutes.POST("/batch-delete", taskHandler.BatchDelete)
+			taskRoutes.DELETE("/:id", taskHandler.Delete)
 			taskRoutes.GET("/:id", taskHandler.Get)
 			taskRoutes.POST("/:id/cancel", taskHandler.Cancel)
 			taskRoutes.POST("/:id/retry", taskHandler.Retry)

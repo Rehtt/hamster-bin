@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -162,8 +163,52 @@ func (h *TaskHandler) Retry(c *gin.Context) {
 	}
 	t, err := h.service.Retry(id)
 	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, repository.ErrTaskState) {
+			taskError(c, err)
+		} else {
+			c.JSON(400, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(202, gin.H{"data": t})
+}
+
+func (h *TaskHandler) Delete(c *gin.Context) {
+	id, ok := taskID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.DeleteOne(id)
+	if err != nil {
+		taskError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"data": result})
+}
+func (h *TaskHandler) BatchDelete(c *gin.Context) {
+	var body struct {
+		Mode string          `json:"mode"`
+		IDs  json.RawMessage `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "请求参数错误"})
+		return
+	}
+	req := tasks.DeleteRequest{Mode: body.Mode}
+	if body.IDs != nil {
+		if body.Mode != repository.DeleteSelected || string(body.IDs) == "null" || json.Unmarshal(body.IDs, &req.IDs) != nil {
+			c.JSON(400, gin.H{"error": "无效的任务 ID 参数"})
+			return
+		}
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.service.Delete(req)
+	if err != nil {
+		taskError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"data": result})
 }

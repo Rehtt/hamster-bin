@@ -4,6 +4,7 @@ import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import type { ParseTask, TaskRequest } from '../types';
 import { TaskContext, taskPending, taskStatusLabel } from './tasks';
+import { TaskResponseGuard } from '../utils/taskDeletion';
 
 const STORAGE_KEY = 'hamster-pending-tasks';
 function savedIDs(): number[] {
@@ -12,15 +13,22 @@ function savedIDs(): number[] {
 
 export function TaskProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<Record<number, ParseTask>>({});
+  const deleted = useRef(new TaskResponseGuard());
   const pending = useRef(new Set<number>(savedIDs()));
   const notified = useRef(new Set<number>());
   const persist = useCallback(() => {
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...pending.current])); } catch { /* 禁用存储时仍可轮询 */ }
   }, []);
   const track = useCallback((task: ParseTask) => {
-    if (notified.current.has(task.id)) return;
+    if (deleted.current.has(task.id) || notified.current.has(task.id)) return;
     if (taskPending(task)) pending.current.add(task.id);
     setTasks(prev => ({ ...prev, [task.id]: task }));
+    persist();
+  }, [persist]);
+  const forget = useCallback((ids: number[]) => {
+    deleted.current.forget(ids);
+    for (const id of ids) { pending.current.delete(id); notified.current.delete(id); }
+    setTasks(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !deleted.current.has(Number(id)))));
     persist();
   }, [persist]);
   const submit = useCallback(async (request: TaskRequest) => {
@@ -61,7 +69,7 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
         await Promise.all([...pending.current].map(async id => {
           try {
             const res = await client.get(`/tasks/${id}`, { signal: controller.signal });
-            if (controller.signal.aborted) return;
+            if (controller.signal.aborted || deleted.current.has(id)) return;
             const task = res.data.data as ParseTask;
             setTasks(prev => ({ ...prev, [id]: task }));
             if (!taskPending(task) && pending.current.delete(id)) {
@@ -71,7 +79,7 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
               toast(t => <span>任务 #{id} {taskStatusLabel[task.status]} · <Link className="underline" to={`/tasks?task=${id}`} onClick={() => toast.dismiss(t.id)}>查看结果</Link></span>, { duration: 7000 });
             }
           } catch (error) {
-            if ((error as { response?: { status?: number } }).response?.status === 404) { pending.current.delete(id); persist(); }
+            if (!controller.signal.aborted && (error as { response?: { status?: number } }).response?.status === 404) { forget([id]); }
           }
         }));
       } catch { /* 网络恢复后下次轮询重试初始化 */ }
@@ -80,7 +88,7 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
     void poll();
     const timer = window.setInterval(() => void poll(), 2000);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [persist, track]);
+  }, [persist, track, forget]);
 
-  return <TaskContext.Provider value={{ tasks, submit, submitImage, track }}>{children}</TaskContext.Provider>;
+  return <TaskContext.Provider value={{ tasks, submit, submitImage, track, forget }}>{children}</TaskContext.Provider>;
 }

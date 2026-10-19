@@ -119,6 +119,8 @@ func WithImages(p *parser.ImageParser, store *ImageStore) func(*Service) {
 }
 
 func (s *Service) SubmitImage(req Request, name string, data []byte) (*models.Task, error) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	req.Type = ImageParse
 	req.Input = Input{UseLLM: true}
 	if req.Source != "components" && req.Source != "pre-stocks" {
@@ -138,7 +140,7 @@ func (s *Service) SubmitImage(req Request, name string, data []byte) (*models.Ta
 		return nil, err
 	}
 	req.Input.Image = input
-	task, err := s.Submit(req, nil)
+	task, err := s.submit(req, nil)
 	if err != nil {
 		_ = os.Remove(filepath.Join(s.images.dir, input.Key))
 	}

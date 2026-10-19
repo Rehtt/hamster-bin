@@ -10,6 +10,7 @@ export const TaskContext = createContext<{
   submit: (request: TaskRequest) => Promise<ParseTask>;
   submitImage: (file: File, source: TaskRequest['source'], recordID?: number) => Promise<ParseTask>;
   track: (task: ParseTask) => void;
+  forget: (ids: number[]) => void;
 } | null>(null);
 export function useTasks() {
   const value = useContext(TaskContext);

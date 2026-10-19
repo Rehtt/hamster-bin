@@ -14,6 +14,41 @@ try {
   const { ParseTraceView } = await server.ssrLoadModule('/src/components/ParseTraceView.tsx');
   const { SupplierReference } = await server.ssrLoadModule('/src/components/SupplierReference.tsx');
   const { parsedComponentFields, matchingSupplierReference, mergeParsed } = await server.ssrLoadModule('/src/utils/parseResult.ts');
+  const { TaskResponseGuard, pruneTaskSelection, lastTaskPage, taskDeleteConfirmation } = await server.ssrLoadModule('/src/utils/taskDeletion.ts');
+  await test('task selection retains only terminal tasks on the current page during polling', () => {
+    const page = [{ id: 1, status: 'succeeded' }, { id: 2, status: 'failed' }, { id: 3, status: 'cancelled' }, { id: 4, status: 'queued' }, { id: 5, status: 'running' }];
+    assert.deepEqual(pruneTaskSelection([1, 2, 3, 4, 5, 6], page), [1, 2, 3]);
+    assert.deepEqual(pruneTaskSelection([1, 2], page), [1, 2]);
+    assert.deepEqual(pruneTaskSelection([1, 2], [{ id: 7, status: 'succeeded' }]), []);
+  });
+  await test('task deletion rejects late responses and keeps tombstones across subsequent polling', async () => {
+    const guard = new TaskResponseGuard();
+    const beforeDelete = guard.snapshot();
+    let resolve;
+    const lateResponse = new Promise(done => { resolve = done; });
+    const apply = lateResponse.then(task => guard.accepts(beforeDelete) && !guard.has(task.id));
+    guard.forget([1, 3]); resolve({ id: 1 });
+    assert.equal(await apply, false);
+    assert.equal(guard.has(1), true);
+    assert.equal(guard.has(2), false);
+    assert.equal(guard.accepts(guard.snapshot()), true);
+    const beforeFilter = guard.snapshot(); guard.invalidate();
+    assert.equal(guard.accepts(beforeFilter), false);
+    assert.equal(guard.has(1), true);
+  });
+  await test('task cleanup confirmation explains scope, permanence, and image references', () => {
+    for (const mode of ['failed', 'all', 'older_than_7_days']) {
+      const message = taskDeleteConfirmation(mode, []);
+      for (const text of ['覆盖全部分页与筛选', '不可恢复', '没有其他任务引用', '排队和运行中的任务保留']) assert.ok(message.includes(text), text);
+    }
+    assert.ok(taskDeleteConfirmation('older_than_7_days', []).includes('168 小时'));
+    assert.ok(taskDeleteConfirmation('selected', [5], true).includes('任务 #5'));
+    assert.ok(taskDeleteConfirmation('selected', [5, 6]).includes('2 项'));
+    assert.ok(!taskDeleteConfirmation('selected', [5, 6]).includes('覆盖全部分页'));
+    assert.equal(lastTaskPage(0, 20), 1);
+    assert.equal(lastTaskPage(20, 20), 1);
+    assert.equal(lastTaskPage(21, 20), 2);
+  });
   const component = {
     platform_code: 'C25804', name: 'RES 10kΩ', model: '0603WAF1002T5E',
     supplier_quote: { stock_quantity: 0, currency: 'USD',
