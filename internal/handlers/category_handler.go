@@ -29,6 +29,15 @@ func (h *CategoryHandler) GetAll(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取分类失败"})
 		return
 	}
+	if status := c.Query("status"); status != "" && status != "all" {
+		filtered := []models.Category{}
+		for _, category := range categories {
+			if category.Status == status {
+				filtered = append(filtered, category)
+			}
+		}
+		categories = filtered
+	}
 	c.JSON(http.StatusOK, gin.H{"data": categories})
 }
 

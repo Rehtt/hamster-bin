@@ -3,22 +3,21 @@ import type { ApiResponse, Component, PreStock } from '../types';
 // 表单可编辑字段与服务端实体分开，禁止把 ID、关联对象和参考单价回传为资料修改。
 type MaterialFields = Pick<Component, 'name' | 'model' | 'manufacturer' | 'value' | 'package' | 'supplier_part_number' | 'description' | 'location' | 'datasheet_url' | 'image_url'>;
 export type ComponentDraft = Partial<MaterialFields> & {
-  component_number?: string | null; category_id?: number; supplier_id?: number | null; stock_quantity?: number;
+  review_confirmations?: Record<string, string>; component_number?: string | null; category_id?: number; supplier_id?: number | null; stock_quantity?: number;
 };
 export type ComponentSaveInput = MaterialFields & {
-  component_number?: string; category_id: number; supplier_id: number | null; stock_quantity: number; total_price_cents?: number; created_at?: string;
+  review_confirmations?: Record<string, string>; component_number?: string; category_id: number; supplier_id: number | null; stock_quantity: number; total_price_cents?: number;
 };
 export type PreStockSaveInput = Omit<ComponentSaveInput, 'stock_quantity'> & { expected_quantity: number };
-export function componentSaveInput(draft: ComponentDraft, categoryID: number, supplierID: number | null, totalPriceCents: number, creating: boolean, originalCreatedAt?: string): ComponentSaveInput {
+export function componentSaveInput(draft: ComponentDraft, categoryID: number, supplierID: number | null, totalPriceCents: number, creating: boolean): ComponentSaveInput {
   return {
+    review_confirmations: draft.review_confirmations,
     component_number: draft.component_number?.trim() || undefined,
     category_id: categoryID, supplier_id: supplierID,
-    name: draft.name?.trim() || '', model: draft.model || '', manufacturer: draft.manufacturer || '',
+    name: draft.name || '', model: draft.model || '', manufacturer: draft.manufacturer || '',
     value: draft.value || '', package: draft.package || '', supplier_part_number: draft.supplier_part_number || '',
     description: draft.description || '', location: draft.location || '', datasheet_url: draft.datasheet_url || '', image_url: draft.image_url || '',
     stock_quantity: Number(draft.stock_quantity),
-    // 旧 PUT 使用全量 Save，保留原创建时间，不能交给表单编辑。
-    ...(!creating && originalCreatedAt ? { created_at: originalCreatedAt } : {}),
     ...(creating && Number(draft.stock_quantity) > 0 && totalPriceCents > 0 ? { total_price_cents: totalPriceCents } : {}),
   };
 }

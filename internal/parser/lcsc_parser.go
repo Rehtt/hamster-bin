@@ -11,6 +11,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/Rehtt/hamster-bin/internal/llm"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 )
 
 type JSONCompleter interface {
@@ -57,7 +58,24 @@ func (p *LCSCParser) Parse(code string) (*ComponentInfo, error) {
 	return p.ParseWithOptions(code, ParseOptions{})
 }
 
-func (p *LCSCParser) ParseWithOptions(code string, options ParseOptions) (*ComponentInfo, error) {
+func (p *LCSCParser) ParseWithOptions(code string, options ParseOptions) (result *ComponentInfo, parseErr error) {
+	var executor *agentExecutor
+	defer func() {
+		if parseErr == nil && result != nil {
+			if executor != nil {
+				sources := []normalization.Source{}
+				for _, cached := range executor.cache {
+					if cached.err == nil && cached.info != nil {
+						sources = append(sources, cached.info.sources...)
+					}
+				}
+				if len(sources) > 0 {
+					result.sources = sources
+				}
+			}
+			normalizeInfo(result, standardsFrom(options.ExecutionContext()))
+		}
+	}()
 	if err := options.ValidateMode(); err != nil {
 		return nil, err
 	}
@@ -75,7 +93,7 @@ func (p *LCSCParser) ParseWithOptions(code string, options ParseOptions) (*Compo
 	if err := options.Context.Err(); err != nil {
 		return nil, err
 	}
-	executor := p.newAgentExecutor(code)
+	executor = p.newAgentExecutor(code)
 	if options.Mode() == "agent" {
 		return p.parseAgent(options.Context, code, trace, executor)
 	}
@@ -104,6 +122,8 @@ func (p *LCSCParser) parseStandard(code string, options ParseOptions, executor *
 			reasons = append(reasons, err.Error())
 			continue
 		}
+		copyInfo := *info
+		info = &copyInfo
 		options.Trace.FinalSource = tool.name
 		if options.UseLLM {
 			if err := p.enrichWithLLM(options.ExecutionContext(), info, params); err != nil {
@@ -140,6 +160,7 @@ func (p *LCSCParser) parseByHTML(code string, parseOptions ParseOptions) (*Compo
 				PlatformURL:  url,
 			}
 		}
+		info.sources = []normalization.Source{snapshot(info, "lcsc_html", url, pageText)}
 		if err := p.enrichWithLLM(parseOptions.ExecutionContext(), info, pageText); err != nil {
 			return nil, err
 		}
@@ -151,6 +172,9 @@ func (p *LCSCParser) parseByHTML(code string, parseOptions ParseOptions) (*Compo
 
 	if err != nil {
 		return nil, err
+	}
+	if len(info.sources) == 0 {
+		info.sources = []normalization.Source{snapshot(info, "lcsc_html", url, pageText)}
 	}
 	return info, nil
 }
@@ -189,9 +213,7 @@ func (p *LCSCParser) fetchDetailDocumentContext(ctx context.Context, url string)
 	}
 
 	pageText := normalizeWhitespace(doc.Text())
-	if len(pageText) > 12000 {
-		pageText = pageText[:12000]
-	}
+
 	return doc, pageText, nil
 }
 
@@ -271,6 +293,7 @@ func parseLCSCDetailDocument(doc *goquery.Document, code, url string) (*Componen
 }
 
 func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pageText string) error {
+	pageText, _ = limitParameters(pageText)
 	// 报价和库存不交给模型处理。
 	initialInfo := *info
 	initialInfo.SupplierQuote = nil
@@ -278,7 +301,7 @@ func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pag
 	result, err := p.llm.CompleteJSON(ctx, []llm.Message{
 		{
 			Role:    "system",
-			Content: "你是电子元件参数解析助手。只输出 JSON object，不要输出 Markdown。字段必须使用英文 snake_case。",
+			Content: "你是电子元件参数解析助手。只输出 JSON object，不要输出 Markdown。字段必须使用英文 snake_case。" + normalizationPrompt(ctx),
 		},
 		{
 			Role: "user",
@@ -288,7 +311,7 @@ func (p *LCSCParser) enrichWithLLM(ctx context.Context, info *ComponentInfo, pag
 name, category_name, model, value, package, description, manufacturer, datasheet_url, image_url
 
 要求：
-- category_name 使用库存系统分类，例如 电阻、电容、MCU、连接器。
+- category_name 仅精确选择系统提示提供的启用分类，未匹配留空。
 - name 商品名称。
 - model 使用厂家型号。
 - value 使用阻值、容值、芯片型号或关键参数。
@@ -307,6 +330,7 @@ name, category_name, model, value, package, description, manufacturer, datasheet
 		return fmt.Errorf("LLM 请求失败: %w: %w", err, ErrParserUpstream)
 	}
 
+	info.semantic = true
 	return applyLLMFields(info, result)
 }
 
@@ -339,7 +363,7 @@ func applyLLMFields(info *ComponentInfo, result string) error {
 	applyString(&info.Value, parsed.Value)
 	applyString(&info.Package, parsed.Package)
 	applyString(&info.Description, parsed.Description)
-	applyString(&info.Manufacturer, parsed.Manufacturer)
+	// 品牌由实际来源绑定，模型不能更换品牌写法。
 	applyString(&info.DatasheetURL, parsed.DatasheetURL)
 	applyString(&info.ImageURL, parsed.ImageURL)
 

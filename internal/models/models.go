@@ -1,14 +1,17 @@
 package models
 
 import (
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"time"
 )
 
 // Category 分类表
 type Category struct {
-	ID       uint   `gorm:"primaryKey" json:"id"`
-	Name     string `gorm:"not null;size:100" json:"name"`
-	ParentID *uint  `json:"parent_id,omitempty"` // 父分类ID，支持树形结构
+	ActiveName *string `gorm:"size:100;uniqueIndex" json:"-"` // 仅启用时写入，跨数据库唯一性保护
+	Status     string  `gorm:"not null;default:pending;size:20;index" json:"status"`
+	ID         uint    `gorm:"primaryKey" json:"id"`
+	Name       string  `gorm:"not null;size:100" json:"name"`
+	ParentID   *uint   `json:"parent_id,omitempty"` // 父分类ID，支持树形结构
 }
 
 // Supplier 供应商表
@@ -21,54 +24,58 @@ type Supplier struct {
 
 // Component 元件表
 type Component struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	CategoryID         uint      `gorm:"not null;index" json:"category_id"`
-	Category           *Category `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	ComponentNumber    *string   `gorm:"uniqueIndex;size:50" json:"component_number,omitempty"` // 系统管理的元件编号
-	Name               string    `gorm:"not null;size:200" json:"name"`                         // 元件名称/型号
-	Model              string    `gorm:"size:100" json:"model,omitempty"`                       // 厂家型号
-	Manufacturer       string    `gorm:"size:100" json:"manufacturer,omitempty"`                // 制造商
-	Value              string    `gorm:"size:100" json:"value,omitempty"`                       // 参数值(如: 10k, 100nF)
-	Package            string    `gorm:"size:50" json:"package,omitempty"`                      // 封装形式
-	SupplierID         *uint     `gorm:"index" json:"supplier_id,omitempty"`                    // 供应商ID
-	Supplier           *Supplier `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`       // 供应商
-	SupplierPartNumber string    `gorm:"size:100" json:"supplier_part_number,omitempty"`        // 供应商料号
-	Description        string    `gorm:"type:text" json:"description,omitempty"`                // 描述
-	StockQuantity      int       `gorm:"default:0" json:"stock_quantity"`                       // 库存数量
-	UnitPriceMicro     int64     `gorm:"default:0" json:"unit_price_micro,omitempty"`           // 参考单价（微元，1元=1,000,000）
-	Location           string    `gorm:"size:100" json:"location,omitempty"`                    // 存放位置
-	DatasheetURL       string    `gorm:"size:500" json:"datasheet_url,omitempty"`
-	ImageURL           string    `gorm:"size:500" json:"image_url,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	Review              []normalization.Review `gorm:"serializer:json;type:text" json:"review,omitempty"`
+	ReviewConfirmations map[string]string      `gorm:"-" json:"review_confirmations,omitempty"`
+	ID                  uint                   `gorm:"primaryKey" json:"id"`
+	CategoryID          uint                   `gorm:"not null;index" json:"category_id"`
+	Category            *Category              `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	ComponentNumber     *string                `gorm:"uniqueIndex;size:50" json:"component_number,omitempty"` // 系统管理的元件编号
+	Name                string                 `gorm:"not null;size:200" json:"name"`                         // 元件名称/型号
+	Model               string                 `gorm:"size:100" json:"model,omitempty"`                       // 厂家型号
+	Manufacturer        string                 `gorm:"size:100" json:"manufacturer,omitempty"`                // 制造商
+	Value               string                 `gorm:"size:100" json:"value,omitempty"`                       // 参数值(如: 10k, 100nF)
+	Package             string                 `gorm:"size:50" json:"package,omitempty"`                      // 封装形式
+	SupplierID          *uint                  `gorm:"index" json:"supplier_id,omitempty"`                    // 供应商ID
+	Supplier            *Supplier              `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`       // 供应商
+	SupplierPartNumber  string                 `gorm:"size:100" json:"supplier_part_number,omitempty"`        // 供应商料号
+	Description         string                 `gorm:"type:text" json:"description,omitempty"`                // 描述
+	StockQuantity       int                    `gorm:"default:0" json:"stock_quantity"`                       // 库存数量
+	UnitPriceMicro      int64                  `gorm:"default:0" json:"unit_price_micro,omitempty"`           // 参考单价（微元，1元=1,000,000）
+	Location            string                 `gorm:"size:100" json:"location,omitempty"`                    // 存放位置
+	DatasheetURL        string                 `gorm:"size:500" json:"datasheet_url,omitempty"`
+	ImageURL            string                 `gorm:"size:500" json:"image_url,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
 }
 
 // PreStock 预入库记录表
 type PreStock struct {
-	ID                 uint       `gorm:"primaryKey" json:"id"`
-	CategoryID         uint       `gorm:"not null;index" json:"category_id"`
-	Category           *Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	ComponentNumber    *string    `gorm:"uniqueIndex;size:50" json:"component_number,omitempty"`
-	Name               string     `gorm:"not null;size:200" json:"name"`
-	Model              string     `gorm:"size:100" json:"model,omitempty"`
-	Manufacturer       string     `gorm:"size:100" json:"manufacturer,omitempty"`
-	Value              string     `gorm:"size:100" json:"value,omitempty"`
-	Package            string     `gorm:"size:50" json:"package,omitempty"`
-	SupplierID         *uint      `gorm:"index" json:"supplier_id,omitempty"`
-	Supplier           *Supplier  `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
-	SupplierPartNumber string     `gorm:"size:100" json:"supplier_part_number,omitempty"`
-	Description        string     `gorm:"type:text" json:"description,omitempty"`
-	ExpectedQuantity   int        `gorm:"default:0" json:"expected_quantity"`
-	TotalPriceCents    int64      `gorm:"default:0" json:"total_price_cents,omitempty"`
-	Location           string     `gorm:"size:100" json:"location,omitempty"`
-	DatasheetURL       string     `gorm:"size:500" json:"datasheet_url,omitempty"`
-	ImageURL           string     `gorm:"size:500" json:"image_url,omitempty"`
-	Status             string     `gorm:"not null;default:pending;size:20;index" json:"status"`
-	ComponentID        *uint      `gorm:"index" json:"component_id,omitempty"`
-	Component          *Component `gorm:"foreignKey:ComponentID" json:"component,omitempty"`
-	ConfirmedAt        *time.Time `json:"confirmed_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	Review              []normalization.Review `gorm:"serializer:json;type:text" json:"review,omitempty"`
+	ReviewConfirmations map[string]string      `gorm:"-" json:"review_confirmations,omitempty"`
+	ID                  uint                   `gorm:"primaryKey" json:"id"`
+	CategoryID          uint                   `gorm:"not null;index" json:"category_id"`
+	Category            *Category              `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	ComponentNumber     *string                `gorm:"uniqueIndex;size:50" json:"component_number,omitempty"`
+	Name                string                 `gorm:"not null;size:200" json:"name"`
+	Model               string                 `gorm:"size:100" json:"model,omitempty"`
+	Manufacturer        string                 `gorm:"size:100" json:"manufacturer,omitempty"`
+	Value               string                 `gorm:"size:100" json:"value,omitempty"`
+	Package             string                 `gorm:"size:50" json:"package,omitempty"`
+	SupplierID          *uint                  `gorm:"index" json:"supplier_id,omitempty"`
+	Supplier            *Supplier              `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
+	SupplierPartNumber  string                 `gorm:"size:100" json:"supplier_part_number,omitempty"`
+	Description         string                 `gorm:"type:text" json:"description,omitempty"`
+	ExpectedQuantity    int                    `gorm:"default:0" json:"expected_quantity"`
+	TotalPriceCents     int64                  `gorm:"default:0" json:"total_price_cents,omitempty"`
+	Location            string                 `gorm:"size:100" json:"location,omitempty"`
+	DatasheetURL        string                 `gorm:"size:500" json:"datasheet_url,omitempty"`
+	ImageURL            string                 `gorm:"size:500" json:"image_url,omitempty"`
+	Status              string                 `gorm:"not null;default:pending;size:20;index" json:"status"`
+	ComponentID         *uint                  `gorm:"index" json:"component_id,omitempty"`
+	Component           *Component             `gorm:"foreignKey:ComponentID" json:"component,omitempty"`
+	ConfirmedAt         *time.Time             `json:"confirmed_at,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
 }
 
 // StockLog 库存变更记录表

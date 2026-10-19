@@ -17,6 +17,7 @@ var (
 
 // CategoryPatch 仅更新明确提供的字段；ParentID 为 0 时解除父分类关联。
 type CategoryPatch struct {
+	Status   *string `json:"status"`
 	Name     *string `json:"name"`
 	ParentID *uint   `json:"parent_id"`
 }
@@ -53,9 +54,20 @@ func (r *CategoryRepository) Create(category *models.Category) error {
 		if err := validateCategoryParent(tx, category.ID, category.ParentID); err != nil {
 			return err
 		}
+		if category.Status == "" {
+			category.Status = "pending"
+		}
+		if err := validateCategoryStatus(tx, category.ID, name, category.Status); err != nil {
+			return err
+		}
 		category.Name = name
 		category.ParentID = categoryParent(category.ParentID)
-		return tx.Create(category).Error
+		if category.Status == "active" {
+			category.ActiveName = &category.Name
+		} else {
+			category.ActiveName = nil
+		}
+		return categoryConstraintError(tx.Create(category).Error)
 	})
 }
 
@@ -75,8 +87,19 @@ func (r *CategoryRepository) Update(id uint, patch CategoryPatch) (*models.Categ
 			if err != nil {
 				return err
 			}
+			if name != category.Name {
+				category.Status = "pending"
+				updates["status"] = "pending"
+			}
 			updates["name"] = name
 			category.Name = name
+		}
+		if patch.Status != nil && !(patch.Name != nil && updates["status"] == "pending") {
+			category.Status = *patch.Status
+			updates["status"] = category.Status
+		}
+		if err := validateCategoryStatus(tx, id, category.Name, category.Status); err != nil {
+			return err
 		}
 		if patch.ParentID != nil {
 			if err := validateCategoryParent(tx, id, patch.ParentID); err != nil {
@@ -88,7 +111,13 @@ func (r *CategoryRepository) Update(id uint, patch CategoryPatch) (*models.Categ
 		if len(updates) == 0 {
 			return nil
 		}
-		return tx.Model(&models.Category{}).Where("id = ?", id).Updates(updates).Error
+		if category.Status == "active" {
+			category.ActiveName = &category.Name
+		} else {
+			category.ActiveName = nil
+		}
+		updates["active_name"] = category.ActiveName
+		return categoryConstraintError(tx.Model(&models.Category{}).Where("id = ?", id).Updates(updates).Error)
 	})
 	if err != nil {
 		return nil, err
@@ -168,4 +197,27 @@ func (r *CategoryRepository) Delete(id uint) error {
 		}
 		return tx.Delete(&category).Error
 	})
+}
+
+func validateCategoryStatus(tx *gorm.DB, id uint, name, status string) error {
+	if status != "pending" && status != "active" && status != "inactive" {
+		return fmt.Errorf("%w: status 仅支持 pending、active、inactive", ErrInvalidCategory)
+	}
+	if status == "active" {
+		var count int64
+		if err := tx.Model(&models.Category{}).Where("status = ? AND name = ? AND id <> ?", "active", name, id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return fmt.Errorf("%w: 已有同名启用分类，请人工处理同义分类", ErrInvalidCategory)
+		}
+	}
+	return nil
+}
+
+func categoryConstraintError(err error) error {
+	if err != nil && (strings.Contains(err.Error(), "categories.active_name") || strings.Contains(err.Error(), "idx_categories_active_name")) {
+		return fmt.Errorf("%w: 已有同名启用分类", ErrInvalidCategory)
+	}
+	return err
 }

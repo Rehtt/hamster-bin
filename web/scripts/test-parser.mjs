@@ -103,6 +103,16 @@ try {
     assert.equal(merged.total_price_yuan, '12.00');
     assert.equal(merged.name, 'manual name');
   });
+  await test('manual values survive parsing before submission, late results and task restoration', () => {
+    const current={name:'人工名称',description:'人工描述',model:'',package:'SOT32',quantity:7};
+    for(const snapshot of [undefined,{...current},{...current,model:'before edit'}]) {
+      const merged=mergeParsed(current,{name:'候选名称',description:'',model:'M1',package:'SOT-32',quantity:99},snapshot);
+      assert.equal(merged.name,'人工名称'); assert.equal(merged.description,'人工描述'); assert.equal(merged.package,'SOT32'); assert.equal(merged.quantity,7);
+      assert.equal(merged.model,snapshot?.model==='before edit' ? '' : 'M1');
+    }
+    const fields=parsedComponentFields({name:'AI名称',description:'AI描述',normalization:{changes:[{field:'name',semantic:true}],issues:[{field:'description',code:'source_conflict'}]}});
+    assert.ok(!('name' in fields)); assert.ok(!('description' in fields));
+  });
   await test('historical JSON retains original timestamp and decimal precision', () => {
     assert.equal(render(JSON.parse(JSON.stringify(component))), render(component));
   });

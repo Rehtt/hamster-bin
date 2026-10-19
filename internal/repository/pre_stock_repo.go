@@ -1,10 +1,13 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"time"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -100,6 +103,24 @@ func (r *PreStockRepository) Create(preStock *models.PreStock) error {
 	}
 
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := validateInventory(tx, preStock.Name, preStock.CategoryID, preStock.SupplierID, preStock.ExpectedQuantity, preStock.TotalPriceCents); err != nil {
+			return err
+		}
+		review, err := validateMaterials(tx, preStockFields(preStock), normalization.Fields{}, nil, preStock.ReviewConfirmations, true, false)
+		if err != nil {
+			return err
+		}
+		preStock.ID = 0
+		preStock.CreatedAt = time.Time{}
+		preStock.UpdatedAt = time.Time{}
+		preStock.Review = review
+		preStock.ReviewConfirmations = nil
+		preStock.Package = normalization.Package(preStock.Package)
+		preStock.Category = nil
+		preStock.Supplier = nil
+		preStock.Component = nil
+		preStock.ComponentID = nil
+		preStock.ConfirmedAt = nil
 		if err := r.assignNumberInTx(tx, preStock); err != nil {
 			return err
 		}
@@ -107,42 +128,12 @@ func (r *PreStockRepository) Create(preStock *models.PreStock) error {
 	})
 }
 
-func (r *PreStockRepository) Update(preStock *models.PreStock) error {
-	if preStock.Status != PreStockStatusPending {
-		return ErrPreStockAlreadyConfirmed
-	}
-
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		var existing models.PreStock
-		if err := tx.First(&existing, preStock.ID).Error; err != nil {
-			return err
-		}
-		if existing.Status != PreStockStatusPending {
-			return ErrPreStockAlreadyConfirmed
-		}
-		if err := r.assignNumberInTx(tx, preStock); err != nil {
-			return err
-		}
-
-		updates := map[string]any{
-			"category_id":          preStock.CategoryID,
-			"component_number":     preStock.ComponentNumber,
-			"name":                 preStock.Name,
-			"model":                preStock.Model,
-			"manufacturer":         preStock.Manufacturer,
-			"value":                preStock.Value,
-			"package":              preStock.Package,
-			"supplier_id":          preStock.SupplierID,
-			"supplier_part_number": preStock.SupplierPartNumber,
-			"description":          preStock.Description,
-			"expected_quantity":    preStock.ExpectedQuantity,
-			"total_price_cents":    preStock.TotalPriceCents,
-			"location":             preStock.Location,
-			"datasheet_url":        preStock.DatasheetURL,
-			"image_url":            preStock.ImageURL,
-		}
-		return tx.Model(&existing).Updates(updates).Error
-	})
+func (r *PreStockRepository) Update(item *models.PreStock) error {
+	updates := detailMap(item)
+	updates["expected_quantity"] = item.ExpectedQuantity
+	updates["total_price_cents"] = item.TotalPriceCents
+	_, err := r.PatchPending(item.ID, updates, item.ReviewConfirmations)
+	return err
 }
 
 func (r *PreStockRepository) Delete(id uint) error {
@@ -158,7 +149,7 @@ func (r *PreStockRepository) Delete(id uint) error {
 	})
 }
 
-func (r *PreStockRepository) Confirm(id uint) (*models.PreStock, error) {
+func (r *PreStockRepository) Confirm(id uint, confirmations ...map[string]string) (*models.PreStock, error) {
 	var confirmed models.PreStock
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
@@ -169,6 +160,25 @@ func (r *PreStockRepository) Confirm(id uint) (*models.PreStock, error) {
 		if preStock.Status != PreStockStatusPending {
 			return ErrPreStockAlreadyConfirmed
 		}
+		if err := validateInventory(tx, preStock.Name, preStock.CategoryID, preStock.SupplierID, preStock.ExpectedQuantity, preStock.TotalPriceCents); err != nil {
+			return err
+		}
+		confirmationsForValue := map[string]string{}
+		for _, review := range preStock.Review {
+			v := preStock.Name
+			if review.Field == "description" {
+				v = preStock.Description
+			}
+			if review.Confirmed && review.ValueHash == normalization.Hash(v) {
+				confirmationsForValue[review.Field] = v
+			}
+		}
+		maps.Copy(confirmationsForValue, firstConfirmation(confirmations))
+		review, err := validateMaterials(tx, preStockFields(&preStock), normalization.Fields{}, nil, confirmationsForValue, true, true)
+		if err != nil {
+			return err
+		}
+		preStock.Review = review
 		preStock.ComponentNumber = NormalizeComponentNumber(preStock.ComponentNumber)
 		if preStock.ComponentNumber == nil {
 			componentRepo := NewComponentRepository(tx)
@@ -192,6 +202,7 @@ func (r *PreStockRepository) Confirm(id uint) (*models.PreStock, error) {
 		}
 
 		component := models.Component{
+			Review:             preStock.Review,
 			CategoryID:         preStock.CategoryID,
 			ComponentNumber:    preStock.ComponentNumber,
 			Name:               preStock.Name,
@@ -225,12 +236,17 @@ func (r *PreStockRepository) Confirm(id uint) (*models.PreStock, error) {
 			}
 		}
 
+		serializedReview, err := json.Marshal(preStock.Review)
+		if err != nil {
+			return err
+		}
 		now := time.Now()
 		updates := map[string]any{
 			"component_number": preStock.ComponentNumber,
 			"status":           PreStockStatusConfirmed,
 			"component_id":     component.ID,
 			"confirmed_at":     now,
+			"review":           string(serializedReview),
 		}
 		if err := tx.Model(&preStock).Updates(updates).Error; err != nil {
 			return err

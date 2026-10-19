@@ -12,9 +12,9 @@ export const parsedTask = (id = 101, status: ParseTask['status'] = 'succeeded'):
   result: status === 'succeeded' ? { component: { name: '解析名称', model: 'PARSED-MODEL', manufacturer: 'YAGEO', category_name: '电阻', platform_code: 'C2040', platform_name: 'LCSC', value: '10kΩ', supplier_quote: { stock_quantity: 98765, currency: 'CNY', price_tiers: [{ min_quantity: 1, unit_price: '0.123456' }], queried_at: now } } } : null,
 });
 export async function mockApi(page: Page): Promise<MockApi> {
-  const category = { id: 1, name: '电阻' };
+  const category: Category = { id: 1, name: '电阻', status:'active' };
   const components: Component[] = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, component_number: `HB-${String(i + 1).padStart(6, '0')}`, name: i === 0 ? mainName : `测试元件${String(i + 1).padStart(2, '0')}`, model: `MODEL-${i + 1}`, manufacturer: 'YAGEO', value: '10kΩ', package: '0603', supplier_part_number: `C${2040 + i}`, description: '用于电路装配', stock_quantity: 35, unit_price_micro: 150000, location: 'A1-03', datasheet_url: '', image_url: '', category_id: 1, category, supplier_id: 1, supplier: { id: 1, name: '嘉立创' }, created_at: now, updated_at: now }));
-  const state: MockApi = { components, categories: [category, { id: 2, name: '电容' }], preStocks: [{ ...components[0], id: 1, expected_quantity: 10, total_price_cents: 2000, status: 'pending' }], tasks: [parsedTask()], logs: [{ id: 1, component_id: 1, component: components[0], change_amount: 35, unit_price_micro: 150000, total_price_cents: 525, reason: '初始入库', created_at: now }], writes: [], failList: false, failSave: false, auth: false };
+  const state: MockApi = { components, categories: [category, { id: 2, name: '电容', status:'active' }], preStocks: [{ ...components[0], id: 1, expected_quantity: 10, total_price_cents: 2000, status: 'pending' }], tasks: [parsedTask()], logs: [{ id: 1, component_id: 1, component: components[0], change_amount: 35, unit_price_micro: 150000, total_price_cents: 525, reason: '初始入库', created_at: now }], writes: [], failList: false, failSave: false, auth: false };
   await page.route('**/api/v1/**', async route => {
     const request = route.request(); const url = new URL(request.url()); const path = url.pathname.replace('/api/v1', ''); const method = request.method();
     const ok = async (data: unknown) => route.fulfill({ json: { data } });
@@ -32,10 +32,12 @@ export async function mockApi(page: Page): Promise<MockApi> {
       if (path.match(/^\/components\/\d+\/stock$/)) { const c = state.components.find(c => c.id === Number(path.split('/')[2]))!; c.stock_quantity += Number(data.amount); return ok(c); }
       if (path.match(/^\/components\/\d+\/backfill-price$/)) return ok({});
       if (path.match(/^\/stock-logs\/\d+\/revoke$/)) { state.logs[0].revoked_at = now; return ok(state.logs[0]); }
+      if (path === '/normalization/preview') return ok({candidate:{...data,category_id:data.category_id || state.categories.find(c=>c.status==='active' && c.name===data.category_name)?.id},normalization:{version:'test',sources:[],changes:[],issues:[]}});
+      if (path.match(/^\/categories\/\d+$/) && method === 'PUT') { const category=state.categories.find(c=>c.id===Number(path.split('/')[2]))!; Object.assign(category,data); if(data.name)category.status='pending'; return ok(category); }
       if (path === '/tasks') { const t = { ...parsedTask(200, 'running'), ...data } as ParseTask; state.tasks.push(t); return ok(t); }
       if (path.match(/^\/tasks\/\d+$/) && method === 'DELETE') { state.tasks = state.tasks.filter(t => t.id !== Number(path.split('/')[2])); return ok({ deleted_ids: [Number(path.split('/')[2])], deleted_count: 1, skipped_count: 0 }); }
       if (path.match(/^\/pre-stocks\/\d+\/confirm$/)) { const item = state.preStocks.find(item => item.id === Number(path.split('/')[2]))!; item.status = 'confirmed'; item.component_id = 99; return ok(item); }
-      if (path === '/categories' && method === 'POST') { const category = { id: state.categories.length + 1, name: String(data.name) }; state.categories.push(category); return ok(category); }
+      if (path === '/categories' && method === 'POST') { const category: Category = { id: state.categories.length + 1, name: String(data.name), status:'pending' }; state.categories.push(category); return ok(category); }
       const match = path.match(/^\/components\/(\d+)$/);
       if (match) { const index = state.components.findIndex(c => c.id === Number(match[1])); if (method === 'DELETE') { state.components.splice(index, 1); return ok({}); } state.components[index] = { ...state.components[index], ...data } as Component; return ok(state.components[index]); }
       if (path === '/components' && method === 'POST') { const component = { ...state.components[0], ...data, id: 99 } as Component; state.components.push(component); return ok(component); }

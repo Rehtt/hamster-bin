@@ -32,6 +32,9 @@ func batchTestDB(t *testing.T) (*gorm.DB, *gin.Engine) {
 	if err := db.AutoMigrate(&models.Category{}, &models.Supplier{}, &models.Component{}, &models.PreStock{}, &models.StockLog{}); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&models.Category{ID: 1, Name: "电阻", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
 	engine := gin.New()
 	handler := handlers.NewBatchHandler(db)
 	engine.POST("/components/batch", handler.CreateComponents)
@@ -77,14 +80,17 @@ func TestBatchQuantityIsExplicitNonnegativeInteger(t *testing.T) {
 					quantity = fmt.Sprintf(",%q:%s", endpoint.quantity, value)
 				}
 				// A valid first row would create all related records before a later validation failure.
-				body := fmt.Sprintf(`{"items":[{"name":"first","category_name":"new-category","supplier_name":"new-supplier",%q:2,"total_price_cents":99},{"name":"second","category_name":"other-category"%s}]}`, endpoint.quantity, quantity)
-				status := 400
+				body := fmt.Sprintf(`{"items":[{"name":"第一条","category_id":1,"supplier_name":"new-supplier",%q:2,"total_price_cents":99},{"name":"第二条","category_id":1%s}]}`, endpoint.quantity, quantity)
+				status := 422
+				if value == "0.5" || value == `"2"` {
+					status = 400
+				}
 				if value == "0" || value == "3" {
 					status = 201
 				}
 				batchCall(t, engine, endpoint.path, body, status)
-				if status == 400 {
-					assertBatchCounts(t, db, 0, 0, 0, 0, 0)
+				if status != 201 {
+					assertBatchCounts(t, db, 0, 0, 1, 0, 0)
 				} else if endpoint.quantity == "stock_quantity" {
 					var rows []models.Component
 					if err := db.Order("id").Find(&rows).Error; err != nil {
@@ -117,8 +123,8 @@ func TestBatchQuantityIsExplicitNonnegativeInteger(t *testing.T) {
 
 func TestBatchSavesFieldsPricesAndAllocatesNumbersAcrossTables(t *testing.T) {
 	db, engine := batchTestDB(t)
-	fields := `"category_name":"电阻","supplier_name":"测试供应商","name":"核对名称","model":"核对型号","manufacturer":"品牌","value":"10K","package":"0603","supplier_part_number":"C2040","description":"描述","location":"A-01","datasheet_url":"https://example.test/data","image_url":"https://example.test/image","total_price_cents":123`
-	body := batchCall(t, engine, "/components/batch", `{"items":[{`+fields+`,"stock_quantity":3},{`+fields+`,"stock_quantity":0,"component_number":" CUSTOM "}]}`, 201)
+	fields := `"category_id":1,"supplier_name":"测试供应商","name":"核对名称","model":"核对型号","manufacturer":"品牌","value":"10K","package":"0603","supplier_part_number":"C2040","description":"描述","location":"A-01","datasheet_url":"https://example.test/data","image_url":"https://example.test/image","total_price_cents":123`
+	body := batchCall(t, engine, "/components/batch", `{"items":[{`+fields+`,"stock_quantity":3},{`+fields+`,"stock_quantity":0,"total_price_cents":0,"component_number":" CUSTOM "}]}`, 201)
 	var components struct {
 		Data []models.Component `json:"data"`
 	}
@@ -128,7 +134,7 @@ func TestBatchSavesFieldsPricesAndAllocatesNumbersAcrossTables(t *testing.T) {
 	if len(components.Data) != 2 || *components.Data[0].ComponentNumber != "HB-000001" || *components.Data[1].ComponentNumber != "CUSTOM" {
 		t.Fatalf("response order/numbers: %s", body)
 	}
-	body = batchCall(t, engine, "/pre-stocks/batch", `{"items":[{`+fields+`,"expected_quantity":3},{`+fields+`,"expected_quantity":0}]}`, 201)
+	body = batchCall(t, engine, "/pre-stocks/batch", `{"items":[{`+fields+`,"expected_quantity":3},{`+fields+`,"expected_quantity":0,"total_price_cents":0}]}`, 201)
 	var preStocks struct {
 		Data []models.PreStock `json:"data"`
 	}
@@ -171,14 +177,18 @@ func TestBatchRollsBackAllTablesOnLateFailure(t *testing.T) {
 				if strings.HasPrefix(path, "/pre-stocks") {
 					quantity = "expected_quantity"
 				}
-				body := fmt.Sprintf(`{"items":[{"name":"first","category_name":"first-category","supplier_name":"first-supplier","component_number":"DUPLICATE",%q:2,"total_price_cents":100},{"category_name":"second-category","supplier_name":"second-supplier",%q:3,%s%s}]}`, quantity, quantity, func() string {
+				body := fmt.Sprintf(`{"items":[{"name":"第一条","category_id":1,"supplier_name":"first-supplier","component_number":"DUPLICATE",%q:2,"total_price_cents":100},{"category_id":1,"supplier_name":"second-supplier",%q:3,%s%s}]}`, quantity, quantity, func() string {
 					if strings.HasPrefix(failure, `"name"`) {
 						return ""
 					}
-					return `"name":"second",`
+					return `"name":"第二条",`
 				}(), failure)
-				batchCall(t, engine, path, body, 400)
-				assertBatchCounts(t, db, 0, 0, 0, 0, 0)
+				status := 422
+				if strings.HasPrefix(failure, `"component_number"`) {
+					status = 400
+				}
+				batchCall(t, engine, path, body, status)
+				assertBatchCounts(t, db, 0, 0, 1, 0, 0)
 			})
 		}
 	}
@@ -189,6 +199,6 @@ func TestBatchRollsBackWhenStockLogWriteFails(t *testing.T) {
 	if err := db.Exec(`CREATE TRIGGER reject_second_log BEFORE INSERT ON stock_logs WHEN NEW.change_amount = 3 BEGIN SELECT RAISE(ABORT, 'simulated log failure'); END`).Error; err != nil {
 		t.Fatal(err)
 	}
-	batchCall(t, engine, "/components/batch", `{"items":[{"name":"first","category_name":"cat1","supplier_name":"sup1","stock_quantity":2,"total_price_cents":100},{"name":"second","category_name":"cat2","supplier_name":"sup2","stock_quantity":3,"total_price_cents":200}]}`, 400)
-	assertBatchCounts(t, db, 0, 0, 0, 0, 0)
+	batchCall(t, engine, "/components/batch", `{"items":[{"name":"第一条","category_id":1,"supplier_name":"sup1","stock_quantity":2,"total_price_cents":100},{"name":"第二条","category_id":1,"supplier_name":"sup2","stock_quantity":3,"total_price_cents":200}]}`, 500)
+	assertBatchCounts(t, db, 0, 0, 1, 0, 0)
 }

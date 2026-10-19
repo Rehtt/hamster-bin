@@ -3,6 +3,10 @@ import { Camera, Check, ImagePlus, Loader2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useTasks, taskPending } from '../context/tasks';
 import type { ParseTask, ParsedImageItem, ReviewedImageItem, TaskRequest } from '../types';
+import { useResource } from '../hooks/useResource';
+import { NormalizationReview } from './inventory/NormalizationReview';
+import { photoComponentInfo } from '../utils/photoResult';
+import type { Category } from '../types';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
@@ -18,11 +22,11 @@ interface Props {
 }
 const normalize = (item: ParsedImageItem): ParsedImageItem => ({ ...item, quantity: item.quantity ?? null });
 const fieldLabels = {
-  name: '名称', category_name: '分类', model: '厂家型号', manufacturer: '制造商', value: '参数',
+  name: '名称', model: '厂家型号', manufacturer: '制造商', value: '参数',
   package: '封装', supplier_name: '供应商', supplier_part_number: '供应商料号', quantity: '数量',
 } as const;
 const isReviewed = (item: ParsedImageItem): item is ReviewedImageItem =>
-  !!item.name.trim() && !!item.category_name.trim() && item.quantity !== null && Number.isInteger(item.quantity) && item.quantity >= 0;
+  !!item.name.trim() && item.quantity !== null && Number.isInteger(item.quantity) && item.quantity >= 0;
 
 // 关闭及切换目标时卸载会话，释放摄像头并清空结果。共享上下文继续跟踪任务。
 export function PhotoParseModal(props: Props) {
@@ -30,6 +34,7 @@ export function PhotoParseModal(props: Props) {
 }
 
 function PhotoParseSession({ onClose, source, recordID, initialTask, onConfirm }: Props) {
+  const categories = useResource<{data: Category[]}>('/categories?status=active');
   const { submitImage, tasks } = useTasks();
   const input = useRef<HTMLInputElement>(null);
   const session = useRef(0);
@@ -72,7 +77,7 @@ function PhotoParseSession({ onClose, source, recordID, initialTask, onConfirm }
   const valid = selected.length > 0 && reviewed.length === selected.length;
   const close = () => { session.current++; onClose(); };
   const confirm = () => {
-    if (!valid) { toast.error('请为选中结果填写名称、分类和非负整数数量'); return; }
+    if (!valid) { toast.error('请为选中结果填写名称和非负整数数量'); return; }
     onConfirm(reviewed); close();
   };
   return <Modal isOpen onClose={close} title="拍照 AI 解析" className="max-w-5xl" footer={<>
@@ -91,6 +96,8 @@ function PhotoParseSession({ onClose, source, recordID, initialTask, onConfirm }
       {items.length > 0 && <div className="space-y-3 max-h-[55vh] overflow-auto">{items.map((item, index) => <div key={index} className="rounded-md border p-3 space-y-2">
         <label className="flex items-center gap-2 font-medium"><input type={recordID ? 'radio' : 'checkbox'} name="photo-result" checked={selected.includes(index)} onChange={e => setSelected(prev => e.target.checked ? (recordID ? [index] : [...prev, index].sort((a, b) => a - b)) : prev.filter(i => i !== index))} />识别结果 {index + 1}</label>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">{(Object.keys(fieldLabels) as (keyof typeof fieldLabels)[]).map(key => <label key={key} className="text-sm space-y-1">{fieldLabels[key]}<Input aria-label={`结果 ${index + 1} ${fieldLabels[key]}`} type={key === 'quantity' ? 'number' : 'text'} min={key === 'quantity' ? 0 : undefined} step={key === 'quantity' ? 1 : undefined} placeholder={key === 'quantity' ? '未知，请填写数量' : fieldLabels[key]} value={item[key] ?? ''} onChange={e => update(index, key, e.target.value)} /></label>)}</div>
+        <label className="text-sm">启用分类<select aria-label={`结果 ${index + 1} 分类`} value={item.category_id || ''} onChange={e=>setItems(prev=>prev.map((entry,i)=>i===index ? {...entry,category_id:Number(e.target.value),category_name:categories.data?.data.find(c=>c.id===Number(e.target.value))?.name || ''}:entry))}><option value="">请在此处或库存表单选择分类</option>{categories.data?.data.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        <NormalizationReview value={{...item,category:String(item.category_id || ''),supplier:item.supplier_name,totalPrice:''}} parsed={photoComponentInfo({...item,quantity:item.quantity ?? 0})} onChange={patch=>setItems(prev=>prev.map((entry,i)=>i===index ? {...entry,...patch,...(patch.category ? {category_id:Number(patch.category)} : {})}:entry))} />
         <Input aria-label={`结果 ${index + 1} 描述`} placeholder="描述" value={item.description} onChange={e => update(index, 'description', e.target.value)} />
       </div>)}</div>}
     </div>

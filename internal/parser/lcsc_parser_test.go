@@ -98,7 +98,7 @@ func TestLCSCParserLocalModelResponse(t *testing.T) {
 	}))
 	defer model.Close()
 	info, err := localParser(page, llm.NewClient(model.URL, "test-key", "test-model")).ParseWithOptions("C123", ParseOptions{UseLLM: true})
-	if err != nil || info.Name != "AI 电阻" || info.CategoryName != "电阻" {
+	if err != nil || info.Name != "AI 电阻" || info.CategoryName != "" || info.Normalization == nil {
 		t.Fatalf("model response: %+v %v", info, err)
 	}
 }

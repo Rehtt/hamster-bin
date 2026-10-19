@@ -5,33 +5,45 @@ import (
 	"math"
 	"strings"
 
+	"errors"
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 func validateInventory(tx *gorm.DB, name string, categoryID uint, supplierID *uint, quantity int, total int64) error {
-	if strings.TrimSpace(name) == "" || categoryID == 0 || quantity < 0 || total < 0 {
-		return fmt.Errorf("名称、分类 ID 必填，数量与总价必须非负")
+	if strings.TrimSpace(name) == "" {
+		return normalization.Invalid("name", "required", "名称不能为空")
 	}
-	if quantity == 0 && total > 0 {
-		return fmt.Errorf("数量为零时不能填写正数总价")
+	if categoryID == 0 {
+		return normalization.Invalid("category_id", "required", "请选择启用分类")
 	}
-	if total > (math.MaxInt64-int64(quantity)/2)/price.MicroPerCent {
-		return fmt.Errorf("总价过大，无法安全换算为微元")
+	if quantity < 0 {
+		return normalization.Invalid("quantity", "invalid", "数量必须非负")
 	}
+	if total < 0 || (quantity == 0 && total > 0) || total > (math.MaxInt64-int64(quantity)/2)/price.MicroPerCent {
+		return normalization.Invalid("total_price_cents", "invalid", "总价无效或超出安全范围")
+	}
+
 	var category models.Category
 	if err := tx.First(&category, categoryID).Error; err != nil {
-		return fmt.Errorf("分类不存在或无法读取: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return normalization.Invalid("category_id", "category_unmatched", "分类不存在")
+		}
+		return err
 	}
 	if supplierID != nil {
 		if *supplierID == 0 {
-			return fmt.Errorf("供应商 ID 必须大于零")
+			return normalization.Invalid("supplier_id", "invalid", "供应商 ID 必须大于零")
 		}
 		var supplier models.Supplier
 		if err := tx.First(&supplier, *supplierID).Error; err != nil {
-			return fmt.Errorf("供应商不存在或无法读取: %w", err)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return normalization.Invalid("supplier_id", "invalid", "供应商不存在")
+			}
+			return err
 		}
 	}
 	return nil
@@ -81,7 +93,7 @@ func checkDetailColumns(updates map[string]any, preStock bool) error {
 }
 
 // PatchDetails 只写入明确提供的资料字段，不覆盖库存、单价或其他资料。
-func (r *ComponentRepository) PatchDetails(id uint, updates map[string]any) (*models.Component, error) {
+func (r *ComponentRepository) PatchDetails(id uint, updates map[string]any, confirmations ...map[string]string) (*models.Component, error) {
 	if err := checkDetailColumns(updates, false); err != nil {
 		return nil, err
 	}
@@ -106,6 +118,9 @@ func (r *ComponentRepository) PatchDetails(id uint, updates map[string]any) (*mo
 			} else {
 				delete(updates, "component_number")
 			}
+		}
+		if err := normalizePatch(tx, &existing, updates, firstConfirmation(confirmations)); err != nil {
+			return err
 		}
 		if err := tx.Model(&existing).Updates(updates).Error; err != nil {
 			return err
@@ -139,7 +154,7 @@ func (r *PreStockRepository) CreateValidated(item *models.PreStock) (*models.Pre
 }
 
 // PatchPending 仅修改待入库记录中提供的字段，并在同一事务内校验完整结果。
-func (r *PreStockRepository) PatchPending(id uint, updates map[string]any) (*models.PreStock, error) {
+func (r *PreStockRepository) PatchPending(id uint, updates map[string]any, confirmations ...map[string]string) (*models.PreStock, error) {
 	if err := checkDetailColumns(updates, true); err != nil {
 		return nil, err
 	}
@@ -162,6 +177,9 @@ func (r *PreStockRepository) PatchPending(id uint, updates map[string]any) (*mod
 				return err
 			}
 			updates["component_number"] = existing.ComponentNumber
+		}
+		if err := normalizePatch(tx, &existing, updates, firstConfirmation(confirmations)); err != nil {
+			return err
 		}
 		if err := tx.Model(&existing).Updates(updates).Error; err != nil {
 			return err

@@ -38,6 +38,7 @@ const STATUS_FILTER_LABELS: Record<PreStockStatus | 'all', string> = {
 };
 
 type PreStockForm = {
+  review_confirmations?: Record<string,string>;
   component_number: string;
   name: string;
   model: string;
@@ -116,7 +117,8 @@ export default function PreStocks() {
   const [activeRowId, setActiveRowId] = useState<number | null>(null);
 
   const formGuard = useFormGuard({ form, category: categoryInput, supplier: supplierInput });
-  const closeForm = () => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); };
+  const normalizationSession = useRef(0);
+  const closeForm = () => { normalizationSession.current++; parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); };
   const cancelForm = async () => { if (!saving && await formGuard.allowClose()) closeForm(); };
   const fetchCategories = async () => {
     const res = await client.get('/categories');
@@ -150,6 +152,7 @@ export default function PreStocks() {
   }, []);
 
   const openForm = (item?: PreStock) => {
+    normalizationSession.current++;
     parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset();
     setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
@@ -171,8 +174,8 @@ export default function PreStocks() {
         image_url: item.image_url || '',
       };
       setForm(initialForm);
-      formGuard.reset({ form: initialForm, category: item.category?.name || '', supplier: item.supplier?.name || '' });
-      setCategoryInput(item.category?.name || '');
+      formGuard.reset({ form: initialForm, category: String(item.category_id), supplier: item.supplier?.name || '' });
+      setCategoryInput(String(item.category_id));
       setSupplierInput(item.supplier?.name || '');
       setPlatformCode(item.supplier_part_number || '');
     } else {
@@ -187,25 +190,9 @@ export default function PreStocks() {
   };
 
   const ensureCategoryID = async () => {
-    const name = categoryInput.trim();
-    if (!name) {
-      toast.error('请输入分类');
-      return null;
-    }
-    const existing = categories.find(c => c.name.toLowerCase() === name.toLowerCase());
-    if (existing) return existing.id;
-
-    try {
-      const res = await client.post('/categories', { name });
-      const id = res.data.data?.id as number | undefined;
-      if (!id) throw new Error('missing id');
-      toast.success(`自动创建分类: ${name}`);
-      await fetchCategories();
-      return id;
-    } catch {
-      toast.error('自动创建分类失败');
-      return null;
-    }
+    const id = Number(categoryInput);
+    if (categories.some(c => c.id === id && (c.status === 'active' || c.id === editingItem?.category_id))) return id;
+    toast.error('请选择启用分类，需要新分类请进入分类管理'); return null;
   };
 
   const ensureSupplierID = async () => {
@@ -227,9 +214,9 @@ export default function PreStocks() {
     }
   };
 
-  const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
+  const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode, parsed: supplierReference });
   const loadPhotoDraft = (draft: PhotoDraft) => {
-    parseTask.reset(); setSupplierReference(undefined); setForm(draft.form); setCategoryInput(draft.category);
+    parseTask.reset(); setSupplierReference(draft.parsed); setForm(draft.form); setCategoryInput(draft.category);
     setSupplierInput(draft.supplier); setPlatformCode(draft.platformCode);
   };
   const switchPhotoDraft = (index: number) => loadPhotoDraft(photoDrafts.select(index, currentPhotoDraft()));
@@ -249,7 +236,7 @@ export default function PreStocks() {
         await client.post('/pre-stocks/batch', { items: drafts.map(draft => ({
           ...draft.form, total_price_yuan: undefined,
           component_number: draft.form.component_number.trim() || undefined,
-          category_name: draft.category.trim(), supplier_name: draft.supplier.trim(),
+          category_id: Number(draft.category), supplier_name: draft.supplier.trim(),
           total_price_cents: yuanToCents(draft.form.total_price_yuan),
         })) });
         toast.success(`已批量创建 ${drafts.length} 条预入库记录`);
@@ -265,16 +252,17 @@ export default function PreStocks() {
       const supplierID = await ensureSupplierID();
       const totalPriceCents = yuanToCents(form.total_price_yuan);
       const payload = {
+        review_confirmations: form.review_confirmations,
         category_id: categoryID,
         supplier_id: supplierID,
         component_number: form.component_number.trim() || undefined,
-        name: form.name.trim(),
+        name: form.name,
         model: form.model.trim(),
         manufacturer: form.manufacturer.trim(),
         value: form.value.trim(),
         package: form.package.trim(),
         supplier_part_number: form.supplier_part_number.trim(),
-        description: form.description.trim(),
+        description: form.description,
         expected_quantity: Number(form.expected_quantity),
         total_price_cents: totalPriceCents > 0 ? totalPriceCents : 0,
         location: form.location.trim(),
@@ -306,31 +294,31 @@ export default function PreStocks() {
   };
 
   type ParseSnapshot = { platformCode: string; form: PreStockForm; category: string; supplier: string };
-  type PhotoDraft = ParseSnapshot & { platformCode: string };
+  type PhotoDraft = ParseSnapshot & { platformCode: string; parsed?: ParsedComponentInfo };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
-    setSupplierReference(component);
+    if (!component.normalization) { const session = normalizationSession.current; void client.post('/normalization/preview', component).then(res => { if (session === normalizationSession.current) applyParsedComponent({ ...component, ...res.data.data.candidate, normalization: res.data.data.normalization }, quantity, snapshot); }).catch(() => toast.error('规范预览失败，请重试')); return; }
+
+    setSupplierReference({...component, quantity});
     setPlatformCode(prev => !snapshot || prev === snapshot.platformCode ? component.platform_code || prev : prev);
     const parsed: Partial<PreStockForm> = parsedComponentFields(component);
     if (quantity !== undefined && quantity >= 0) parsed.expected_quantity = quantity;
     setForm(prev => mergeParsed(prev, parsed, snapshot?.form));
-    if (component.category_name) setCategoryInput(prev => !snapshot || prev === snapshot.category ? component.category_name! : prev);
-    const supplier = getSupplierNameFromPlatform(component.platform_name);
-    if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
+    if (component.category_name) setCategoryInput(prev => !prev && (!snapshot || prev === snapshot.category) && component.category_id ? String(component.category_id) : prev);
+    const supplier = component.supplier_name || getSupplierNameFromPlatform(component.platform_name);
+    if (supplier) setSupplierInput(prev => !prev && (!snapshot || prev === snapshot.supplier) ? supplier : prev);
   };
   const applyPhotoResults = (items: ReviewedImageItem[]) => {
     parseTask.reset(); setSupplierReference(undefined);
     const first = items[0];
     if (editingItem) {
       applyParsedComponent(photoComponentInfo(first), first.quantity);
-      setCategoryInput(first.category_name); setSupplierInput(first.supplier_name);
+      setSupplierInput(prev => prev || first.supplier_name);
       return;
     }
     const drafts: PhotoDraft[] = items.map((item, index) => ({
-      form: { ...(index === 0 ? form : EMPTY_FORM), name: item.name, model: item.model,
-        manufacturer: item.manufacturer, value: item.value, package: item.package,
-        supplier_part_number: item.supplier_part_number, description: item.description,
-        expected_quantity: item.quantity },
-      category: item.category_name, supplier: item.supplier_name, platformCode: item.supplier_part_number,
+      parsed: {...photoComponentInfo(item),quantity:item.quantity},
+      form: { ...mergeParsed(index === 0 ? form : EMPTY_FORM, parsedComponentFields(photoComponentInfo(item))), expected_quantity: index === 0 && form.expected_quantity ? form.expected_quantity : item.quantity, review_confirmations:item.review_confirmations },
+      category: index === 0 && categoryInput ? categoryInput : String(item.category_id || ''), supplier: index === 0 && supplierInput ? supplierInput : item.supplier_name, platformCode: item.supplier_part_number,
     }));
     photoDrafts.start(drafts); loadPhotoDraft(drafts[0]);
     toast.success(`已载入 ${items.length} 条照片识别结果，请逐条确认后保存`);
@@ -480,7 +468,7 @@ export default function PreStocks() {
                   <td className="p-4 align-middle">
                     <button type="button" disabled={!item.image_url} aria-label={`预览 ${item.name} 图片`} onClick={() => setPreviewImage(item.image_url)}><SafeImage src={item.image_url} alt={item.name} className="size-10" /></button>
                   </td>
-                  <td className="p-4 align-middle min-w-40"><button className="text-left font-medium text-primary hover:underline" disabled={item.status !== 'pending'} onClick={() => openForm(item)}>{item.name}</button></td>
+                  <td className="p-4 align-middle min-w-40"><button className="text-left font-medium text-primary hover:underline" disabled={item.status !== 'pending'} onClick={() => openForm(item)}>{item.name}</button>{!!item.review?.length && <p className="text-xs text-muted-foreground">{item.review.map(r=>`${r.field === 'name' ? '名称' : '描述'}待整理${r.confirmed ? '（已确认保留原文）' : '（待确认）'}`).join('；')}</p>}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.model || '-'}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.category?.name || '-'}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.supplier?.name || '-'}</td>
@@ -543,7 +531,7 @@ export default function PreStocks() {
             if ('quantity' in patch) setForm(prev => ({ ...prev, expected_quantity: quantity ?? null }));
             if (category !== undefined) setCategoryInput(category); if (supplier !== undefined) setSupplierInput(supplier);
             setForm(prev => ({ ...prev, ...fields, component_number: fields.component_number ?? prev.component_number, total_price_yuan: totalPrice ?? prev.total_price_yuan }));
-          }} onSubmit={() => void handleSubmit()} categories={categories.map(c => c.name)} suppliers={suppliers.map(s => s.name)} manufacturers={manufacturerOptions} packages={packageOptions} locations={locationOptions} preStock editing={!!editingItem} busy={saving} />
+          }} onSubmit={() => void handleSubmit()} categories={categories} parsed={supplierReference} suppliers={suppliers.map(s => s.name)} manufacturers={manufacturerOptions} packages={packageOptions} locations={locationOptions} preStock editing={!!editingItem} busy={saving} review={editingItem?.review} />
         </div>
       </Modal>
 

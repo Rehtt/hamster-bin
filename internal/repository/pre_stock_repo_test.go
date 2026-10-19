@@ -23,7 +23,7 @@ func setupPreStockTestDB(t *testing.T) *gorm.DB {
 
 func seedPreStockCategory(t *testing.T, db *gorm.DB) models.Category {
 	t.Helper()
-	category := models.Category{Name: "电阻"}
+	category := models.Category{Name: "电阻", Status: "active"}
 	if err := db.Create(&category).Error; err != nil {
 		t.Fatalf("create category: %v", err)
 	}

@@ -29,7 +29,7 @@ test('详情资料、库存、流水与编辑保存', async ({ page, api }) => {
   await dialog.getByRole('textbox', { name: '名称', exact: true }).fill('手工更新名称'); await dialog.getByRole('button', { name: '保存', exact: true }).click();
   await expect(dialog).toBeHidden(); await expect(page.getByRole('button', { name: '手工更新名称', exact: true }).filter({ visible: true })).toBeVisible();
   const payload = api.writes.find(w => w.method === 'PUT' && w.path === '/components/1')?.data;
-  expect(payload?.name).toBe('手工更新名称'); expect(payload?.created_at).toBe('2026-10-19T02:00:00Z'); expect(payload).not.toHaveProperty('unit_price_micro'); expect(payload).not.toHaveProperty('id'); expect(payload).not.toHaveProperty('category');
+  expect(payload?.name).toBe('手工更新名称'); expect(payload).not.toHaveProperty('created_at'); expect(payload).not.toHaveProperty('unit_price_micro'); expect(payload).not.toHaveProperty('id'); expect(payload).not.toHaveProperty('category');
 });
 
 test('单次出库数量校验和变更预览', async ({ page, api }) => {
@@ -115,4 +115,36 @@ test('网络失败可重试，保存失败保留输入', async ({ page, api }) =
 test('表单校验定位到首个错误字段，Esc 关闭菜单后恢复焦点', async ({ page, api }) => {
   void api; await page.goto('/components'); await page.getByRole('button', { name: '添加元件', exact: true }).click(); const form = page.getByRole('dialog', { name: '添加元件' }); await form.getByRole('button', { name: '保存', exact: true }).click(); await expect(form.getByRole('textbox', { name: '名称', exact: true })).toBeFocused(); await expect(form.getByText('请输入元件名称')).toBeVisible(); await form.getByRole('button', { name: '关闭', exact: true }).click();
   const button = page.getByRole('button', { name: '操作', exact: true }).filter({ visible: true }).first(); await button.click(); await page.keyboard.press('Escape'); await expect(button).toBeFocused();
+});
+
+test('任务恢复保护已有资料并逐字段选择替换', async ({page,api})=>{
+ api.tasks=[{...parsedTask(301),record_id:1}];
+ await page.goto('/components?applyTask=301'); const form=page.getByRole('dialog',{name:'编辑元件'});
+ await expect(form.getByRole('textbox',{name:'名称',exact:true})).toHaveValue(mainName);
+ await form.getByRole('button',{name:'替换名称',exact:true}).click();
+ await expect(form.getByRole('textbox',{name:'名称',exact:true})).toHaveValue('解析名称');
+ await expect(form.getByLabel('厂家型号',{exact:true})).toHaveValue('MODEL-1');
+});
+
+test('分类逐项审核启用，改名重新待审核',async({page,api})=>{
+ api.categories[0].status='pending';await page.goto('/categories');
+ await page.getByRole('combobox',{name:'分类状态'}).selectOption('pending'); await expect(page).toHaveURL(/status=pending/); await expect(page.getByRole('button',{name:'操作',exact:true})).toHaveCount(1);
+ await page.getByRole('button',{name:'操作',exact:true}).click();
+ await page.getByRole('menuitem',{name:'审核启用'}).click();
+ await expect.poll(()=>api.categories[0].status).toBe('active');
+ await page.getByRole('combobox',{name:'分类状态'}).selectOption('active');
+ await page.getByRole('button',{name:'操作',exact:true}).first().click();await page.getByRole('menuitem',{name:'编辑',exact:true}).click();
+ await page.getByLabel('分类名称',{exact:true}).fill('贴片电阻');await page.getByRole('button',{name:'保存',exact:true}).click();
+ await expect.poll(()=>api.categories[0].status).toBe('pending');
+});
+
+test('原文确认绑定字段值，修改后需要重新预览确认',async({page,api})=>{
+ void api;
+ await page.route('**/api/v1/normalization/preview',async route=>{const input=route.request().postDataJSON();await route.fulfill({json:{data:{candidate:input,normalization:{version:'test',sources:[],changes:[],issues:[{field:'name',code:'needs_review',message:'请明确确认保留原文'}]}}}});});
+ await page.goto('/components?new=1');const form=page.getByRole('dialog',{name:'添加元件'});
+ await form.getByRole('textbox',{name:'名称',exact:true}).fill('Unknown');await form.getByRole('button',{name:'本地规范预览'}).click();
+ await form.getByRole('checkbox',{name:'确认保留名称原文（修改后需重新确认）'}).check();
+ await form.getByRole('textbox',{name:'名称',exact:true}).fill('Changed');
+ await expect(form.getByRole('checkbox',{name:'确认保留名称原文（修改后需重新确认）'})).toBeHidden();
+ await form.getByRole('button',{name:'本地规范预览'}).click();await expect(form.getByRole('checkbox',{name:'确认保留名称原文（修改后需重新确认）'})).not.toBeChecked();
 });

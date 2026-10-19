@@ -1,4 +1,5 @@
 export interface Category {
+  status: 'pending' | 'active' | 'inactive';
   id: number;
   name: string;
 }
@@ -9,6 +10,7 @@ export interface Supplier {
 }
 
 export interface Component {
+  review?: ReviewState[];
   id: number;
   category_id: number;
   supplier_id?: number | null;
@@ -47,6 +49,7 @@ export interface StockLog {
 export type PreStockStatus = 'pending' | 'confirmed';
 
 export interface PreStock {
+  review?: ReviewState[];
   id: number;
   category_id: number;
   supplier_id?: number | null;
@@ -144,6 +147,10 @@ export interface SupplierQuote {
 }
 
 export interface ParsedComponentInfo {
+  supplier_name?: string;
+  category_id?: number;
+  normalization?: NormalizationMetadata;
+  quantity?: number;
   supplier_quote?: SupplierQuote;
   name?: string;
   category_name?: string;
@@ -167,6 +174,9 @@ export interface TaskResult {
   qrcode_info?: { code: string; quantity: number; raw_data: string; platform: string };
 }
 export interface ParsedImageItem {
+  category_id?: number;
+  normalization?: NormalizationMetadata;
+  review_confirmations?: Record<string, string>;
   name: string;
   category_name: string;
   model: string;
@@ -200,3 +210,14 @@ export interface ParseTask extends Omit<TaskRequest, 'source'> {
   started_at?: string;
   finished_at?: string;
 }
+
+export interface ReviewState { field: string; reason: string; confirmed: boolean; value_hash: string }
+export interface NormalizationFields { name: string; description: string; model: string; manufacturer: string; package: string; category_name?: string; category_id?: number }
+export interface NormalizationMetadata {
+ primary_source?: string;
+ version: string;
+ sources: { name: string; url?: string; queried_at: string; fields: NormalizationFields; parameters?: string; truncated: boolean }[];
+ changes: { field: string; original: string; candidate: string; semantic?: boolean }[];
+ issues: { field: string; code: string; message: string; sources?: string[] }[];
+}
+export interface NormalizationResult { candidate: NormalizationFields; normalization: NormalizationMetadata }

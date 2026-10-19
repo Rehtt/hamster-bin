@@ -5,15 +5,15 @@ export function mergeParsed<T extends object>(current: T, parsed: Partial<T>, sn
   const next = { ...current };
   for (const key of Object.keys(parsed) as (keyof T)[]) {
     const value = parsed[key];
-    if (value !== '' && value !== undefined && value !== null && (!snapshot || current[key] === snapshot[key])) next[key] = value as T[keyof T];
+    if (value !== '' && value !== undefined && value !== null && (current[key] === undefined || current[key] === null || current[key] === '') && (!snapshot || current[key] === snapshot[key])) next[key] = value as T[keyof T];
   }
   return next;
 }
 
 // 显式挑选业务表单资料；供应商报价和库存始终留在参考快照中。
 export function parsedComponentFields(info: ParsedComponentInfo) {
-  return {
-    name: info.name || info.model || '',
+  const fields = {
+    name: info.name || '',
     model: info.model || '',
     manufacturer: info.manufacturer || '',
     value: info.value || '',
@@ -23,6 +23,9 @@ export function parsedComponentFields(info: ParsedComponentInfo) {
     datasheet_url: info.datasheet_url || '',
     image_url: info.image_url || '',
   };
+  for (const change of info.normalization?.changes || []) if (change.semantic && change.field in fields) delete (fields as Partial<typeof fields>)[change.field as keyof typeof fields];
+  for (const issue of info.normalization?.issues || []) if (issue.code === 'source_conflict' && issue.field in fields) delete (fields as Partial<typeof fields>)[issue.field as keyof typeof fields];
+  return fields;
 }
 
 export function matchingSupplierReference(info: ParsedComponentInfo | undefined, partNumber: string, queryCode: string) {

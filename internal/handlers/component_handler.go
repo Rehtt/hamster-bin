@@ -338,44 +338,19 @@ func (h *ComponentHandler) Create(c *gin.Context) {
 	}
 
 	component := req.Component
-	if req.TotalPriceCents != nil && *req.TotalPriceCents > 0 && component.StockQuantity > 0 {
-		component.UnitPriceMicro = price.UnitPriceMicro(*req.TotalPriceCents, component.StockQuantity)
+	component.ID = 0
+	component.CreatedAt = time.Time{}
+	component.UpdatedAt = time.Time{}
+	total := int64(0)
+	if req.TotalPriceCents != nil {
+		total = *req.TotalPriceCents
 	}
-
-	if err := h.componentRepo.AssignComponentNumberForCreate(&component); err != nil {
-		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "元件编号已存在"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "分配元件编号失败"})
+	created, err := h.componentRepo.CreateWithInitialStock(&component, total)
+	if err != nil {
+		inventoryWriteError(c, err)
 		return
 	}
-
-	if err := h.componentRepo.Create(&component); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建元件失败"})
-		return
-	}
-
-	if component.StockQuantity > 0 && req.TotalPriceCents != nil && *req.TotalPriceCents > 0 {
-		log := models.StockLog{
-			ComponentID:     component.ID,
-			ChangeAmount:    component.StockQuantity,
-			UnitPriceMicro:  component.UnitPriceMicro,
-			TotalPriceCents: *req.TotalPriceCents,
-			Reason:          "初始入库",
-		}
-		if err := h.stockLogRepo.Create(&log); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建初始库存记录失败"})
-			return
-		}
-	}
-
-	created, err := h.componentRepo.GetByID(component.ID)
-	if err == nil {
-		component = *created
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"data": component})
+	c.JSON(http.StatusCreated, gin.H{"data": created})
 }
 
 // Update 更新元件
@@ -387,54 +362,17 @@ func (h *ComponentHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// 1. 先获取现有元件信息
-	existing, err := h.componentRepo.GetByID(uint(id))
+	updates, confirmations, err := readDetailPatch(c, false)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "元件不存在"})
+		c.JSON(400, gin.H{"error": "请求参数错误"})
 		return
 	}
-	component := *existing
-
-	// 2. 将请求数据绑定到现有对象上（支持部分更新）
-	var req struct {
-		models.Component
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
-		return
-	}
-	component = req.Component
-
-	// 3. 确保 ID 正确
-	component.ID = uint(id)
-
-	// 4. 清除关联对象，防止 GORM 尝试更新关联的分类信息，只更新外键 CategoryID
-	component.Category = nil
-	component.Supplier = nil
-	component.UnitPriceMicro = existing.UnitPriceMicro
-
-	if err := h.componentRepo.ValidateComponentNumberForUpdate(&component, existing); err != nil {
-		if errors.Is(err, repository.ErrComponentNumberDuplicate) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "元件编号已存在"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "校验元件编号失败"})
-		return
-	}
-
-	// 5. 保存更新
-	if err := h.componentRepo.Update(&component); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新元件失败"})
-		return
-	}
-
-	componentPtr, err := h.componentRepo.GetByID(uint(id))
+	updated, err := h.componentRepo.PatchDetails(uint(id), updates, confirmations)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取更新后元件失败"})
+		inventoryWriteError(c, err)
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"data": componentPtr})
+	c.JSON(200, gin.H{"data": updated})
 }
 
 // BackfillPrice 补录价格

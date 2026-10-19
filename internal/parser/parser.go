@@ -3,11 +3,18 @@ package parser
 import (
 	"context"
 	"errors"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"strings"
+	"sync"
 )
 
 // ComponentInfo 从平台解析出的元件信息
 type ComponentInfo struct {
+	CategoryID    uint                    `json:"category_id,omitempty"`
+	Normalization *normalization.Metadata `json:"normalization,omitempty"`
+	sources       []normalization.Source
+	primarySource string
+	semantic      bool
 	SupplierQuote *SupplierQuote `json:"supplier_quote,omitempty"` // 供应商参考快照，不参与库存和采购金额计算
 	Name          string         `json:"name"`                     // 元件名称
 	CategoryName  string         `json:"category_name"`            // 建议分类名称
@@ -65,7 +72,9 @@ type OptionParser interface {
 
 // ParserManager 解析器管理器
 type ParserManager struct {
-	parsers []Parser
+	standardsMu sync.RWMutex
+	standards   normalization.Reader
+	parsers     []Parser
 }
 
 var (
@@ -114,12 +123,25 @@ func (m *ParserManager) ParseWithOptions(code string, options ParseOptions) (*Co
 		return nil, ErrNoParsersAvailable
 	}
 
+	s, err := m.readStandards(options.ExecutionContext())
+	if err != nil {
+		return nil, err
+	}
+	options.Context = context.WithValue(options.ExecutionContext(), standardsKey{}, s)
 	for _, parser := range m.parsers {
 		if parser.CanParse(code) {
 			if optionParser, ok := parser.(OptionParser); ok {
-				return optionParser.ParseWithOptions(code, options)
+				info, err := optionParser.ParseWithOptions(code, options)
+				if err == nil {
+					normalizeInfo(info, s)
+				}
+				return info, err
 			}
-			return parser.Parse(code)
+			info, err := parser.Parse(code)
+			if err == nil {
+				normalizeInfo(info, s)
+			}
+			return info, err
 		}
 	}
 

@@ -37,7 +37,7 @@ func TestLCSCDetailMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Name != "RES 10kΩ" || info.Model != "0603WAF1002T5E" || info.Manufacturer != "UNI-ROYAL" || info.Package != "0603" || info.CategoryName != "Chip Resistor" || info.Description != "Thick Film Resistor" || info.Value != "Resistance: 10kΩ; Tolerance: ±1%" || info.ImageURL != "https://assets.lcsc.com/resistor.jpg" || info.DatasheetURL != "https://datasheet.lcsc.com/resistor.pdf" {
+	if info.Name != "RES 10kΩ" || info.Model != "0603WAF1002T5E" || info.Manufacturer != "UNI-ROYAL" || info.Package != "0603" || info.CategoryName != "" || info.Normalization.Sources[0].Fields.CategoryName != "Chip Resistor" || info.Description != "Thick Film Resistor" || info.Value != "Resistance: 10kΩ; Tolerance: ±1%" || info.ImageURL != "https://assets.lcsc.com/resistor.jpg" || info.DatasheetURL != "https://datasheet.lcsc.com/resistor.pdf" {
 		t.Fatalf("mapping: %+v", info)
 	}
 	quote := info.SupplierQuote

@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"github.com/Rehtt/hamster-bin/internal/repository"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -82,6 +84,9 @@ func (h *PreStockHandler) Create(c *gin.Context) {
 		return
 	}
 
+	preStock.ID = 0
+	preStock.CreatedAt = time.Time{}
+	preStock.UpdatedAt = time.Time{}
 	if err := h.repo.Create(&preStock); err != nil {
 		writePreStockError(c, err, "创建预入库记录失败")
 		return
@@ -104,29 +109,17 @@ func (h *PreStockHandler) Update(c *gin.Context) {
 		return
 	}
 
-	var preStock models.PreStock
-	if err := c.ShouldBindJSON(&preStock); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
-		return
-	}
-	preStock.ID = uint(id)
-	preStock.Status = repository.PreStockStatusPending
-	preStock.Category = nil
-	preStock.Supplier = nil
-	preStock.Component = nil
-
-	if err := h.repo.Update(&preStock); err != nil {
-		writePreStockError(c, err, "更新预入库记录失败")
-		return
-	}
-
-	updated, err := h.repo.GetByID(preStock.ID)
+	updates, confirmations, err := readDetailPatch(c, true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取更新后预入库记录失败"})
+		c.JSON(400, gin.H{"error": "请求参数错误"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"data": updated})
+	updated, err := h.repo.PatchPending(uint(id), updates, confirmations)
+	if err != nil {
+		inventoryWriteError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"data": updated})
 }
 
 // Delete 删除待入库记录
@@ -155,7 +148,16 @@ func (h *PreStockHandler) Confirm(c *gin.Context) {
 		return
 	}
 
-	item, err := h.repo.Confirm(uint(id))
+	var req struct {
+		Confirmations map[string]string `json:"review_confirmations"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "请求参数错误"})
+			return
+		}
+	}
+	item, err := h.repo.Confirm(uint(id), req.Confirmations)
 	if err != nil {
 		writePreStockError(c, err, "确认预入库失败")
 		return
@@ -165,6 +167,11 @@ func (h *PreStockHandler) Confirm(c *gin.Context) {
 }
 
 func writePreStockError(c *gin.Context, err error, fallback string) {
+	var validation *normalization.ValidationError
+	if errors.As(err, &validation) {
+		inventoryWriteError(c, err)
+		return
+	}
 	switch {
 	case errors.Is(err, repository.ErrComponentNumberDuplicate):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "元件编号已存在"})

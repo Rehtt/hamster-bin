@@ -24,17 +24,18 @@ type ListComponentsInput struct {
 	SortOrder          string `json:"sort_order,omitempty" jsonschema:"排序方向 asc 或 desc，默认 desc"`
 }
 type DetailsInput struct {
-	ComponentNumber    string `json:"component_number,omitempty" jsonschema:"唯一元件编号，留空自动分配 HB-xxxxxx"`
-	Model              string `json:"model,omitempty" jsonschema:"厂家型号"`
-	Manufacturer       string `json:"manufacturer,omitempty" jsonschema:"制造商"`
-	Value              string `json:"value,omitempty" jsonschema:"参数值"`
-	Package            string `json:"package,omitempty" jsonschema:"封装"`
-	SupplierID         *uint  `json:"supplier_id,omitempty" jsonschema:"已存在的供应商 ID，可先创建供应商"`
-	SupplierPartNumber string `json:"supplier_part_number,omitempty" jsonschema:"供应商料号"`
-	Description        string `json:"description,omitempty" jsonschema:"描述"`
-	Location           string `json:"location,omitempty" jsonschema:"存放位置"`
-	DatasheetURL       string `json:"datasheet_url,omitempty" jsonschema:"资料链接"`
-	ImageURL           string `json:"image_url,omitempty" jsonschema:"图片链接"`
+	ReviewConfirmations map[string]string `json:"review_confirmations,omitempty" jsonschema:"明确确认保留原文，键为 name/description，值必须等于本次提交字段值"`
+	ComponentNumber     string            `json:"component_number,omitempty" jsonschema:"唯一元件编号，留空自动分配 HB-xxxxxx"`
+	Model               string            `json:"model,omitempty" jsonschema:"厂家型号"`
+	Manufacturer        string            `json:"manufacturer,omitempty" jsonschema:"制造商"`
+	Value               string            `json:"value,omitempty" jsonschema:"参数值"`
+	Package             string            `json:"package,omitempty" jsonschema:"封装"`
+	SupplierID          *uint             `json:"supplier_id,omitempty" jsonschema:"已存在的供应商 ID，可先创建供应商"`
+	SupplierPartNumber  string            `json:"supplier_part_number,omitempty" jsonschema:"供应商料号"`
+	Description         string            `json:"description,omitempty" jsonschema:"描述"`
+	Location            string            `json:"location,omitempty" jsonschema:"存放位置"`
+	DatasheetURL        string            `json:"datasheet_url,omitempty" jsonschema:"资料链接"`
+	ImageURL            string            `json:"image_url,omitempty" jsonschema:"图片链接"`
 }
 type CreateComponentInput struct {
 	DetailsInput
@@ -53,19 +54,20 @@ type CreatePreStockInput struct {
 
 // 指针区分省略与零值；供应商 ID 为 0 表示解除关联。
 type PatchDetailsInput struct {
-	Name               *string `json:"name,omitempty" jsonschema:"元件名称，提供时不能为空"`
-	CategoryID         *uint   `json:"category_id,omitempty" jsonschema:"已存在的分类 ID"`
-	ComponentNumber    *string `json:"component_number,omitempty" jsonschema:"唯一元件编号"`
-	Model              *string `json:"model,omitempty" jsonschema:"厂家型号，可用空字符串清除"`
-	Manufacturer       *string `json:"manufacturer,omitempty" jsonschema:"制造商"`
-	Value              *string `json:"value,omitempty" jsonschema:"参数值"`
-	Package            *string `json:"package,omitempty" jsonschema:"封装"`
-	SupplierID         *uint   `json:"supplier_id,omitempty" jsonschema:"供应商 ID，0 表示解除关联"`
-	SupplierPartNumber *string `json:"supplier_part_number,omitempty" jsonschema:"供应商料号"`
-	Description        *string `json:"description,omitempty" jsonschema:"描述"`
-	Location           *string `json:"location,omitempty" jsonschema:"存放位置"`
-	DatasheetURL       *string `json:"datasheet_url,omitempty" jsonschema:"资料链接"`
-	ImageURL           *string `json:"image_url,omitempty" jsonschema:"图片链接"`
+	ReviewConfirmations map[string]string `json:"review_confirmations,omitempty" jsonschema:"保留原文的逐字段确认，值须等于本次提交值"`
+	Name                *string           `json:"name,omitempty" jsonschema:"元件名称，提供时不能为空"`
+	CategoryID          *uint             `json:"category_id,omitempty" jsonschema:"已存在的分类 ID"`
+	ComponentNumber     *string           `json:"component_number,omitempty" jsonschema:"唯一元件编号"`
+	Model               *string           `json:"model,omitempty" jsonschema:"厂家型号，可用空字符串清除"`
+	Manufacturer        *string           `json:"manufacturer,omitempty" jsonschema:"制造商"`
+	Value               *string           `json:"value,omitempty" jsonschema:"参数值"`
+	Package             *string           `json:"package,omitempty" jsonschema:"封装"`
+	SupplierID          *uint             `json:"supplier_id,omitempty" jsonschema:"供应商 ID，0 表示解除关联"`
+	SupplierPartNumber  *string           `json:"supplier_part_number,omitempty" jsonschema:"供应商料号"`
+	Description         *string           `json:"description,omitempty" jsonschema:"描述"`
+	Location            *string           `json:"location,omitempty" jsonschema:"存放位置"`
+	DatasheetURL        *string           `json:"datasheet_url,omitempty" jsonschema:"资料链接"`
+	ImageURL            *string           `json:"image_url,omitempty" jsonschema:"图片链接"`
 }
 type UpdateComponentInput struct {
 	IDInput
@@ -95,10 +97,12 @@ type StatsInput struct {
 	Range string `json:"range,omitempty" jsonschema:"统计时间范围 month/quarter/all，默认 month"`
 }
 type CreateCategoryInput struct {
+	Status   string `json:"status,omitempty" jsonschema:"pending/active/inactive，默认 pending"`
 	Name     string `json:"name" jsonschema:"分类名称，不能为空"`
 	ParentID *uint  `json:"parent_id,omitempty" jsonschema:"已存在的父分类 ID，不填或 0 表示顶级分类"`
 }
 type UpdateCategoryInput struct {
+	Status *string `json:"status,omitempty" jsonschema:"pending/active/inactive，改名后强制 pending"`
 	IDInput
 	Name     *string `json:"name,omitempty" jsonschema:"分类名称，去除首尾空白后不能为空；省略或 null 保持原值"`
 	ParentID *uint   `json:"parent_id,omitempty" jsonschema:"已存在的父分类 ID；0 表示移为顶级分类，省略或 null 保持原值；不能是自身或后代"`
@@ -134,4 +138,18 @@ func (p PatchDetailsInput) updates() map[string]any {
 		}
 	}
 	return m
+}
+
+type PreviewNormalizationInput struct {
+	Name         string `json:"name,omitempty"`
+	Description  string `json:"description,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Package      string `json:"package,omitempty"`
+	CategoryName string `json:"category_name,omitempty"`
+	CategoryID   uint   `json:"category_id,omitempty"`
+}
+type ConfirmPreStockInput struct {
+	IDInput
+	ReviewConfirmations map[string]string `json:"review_confirmations,omitempty"`
 }

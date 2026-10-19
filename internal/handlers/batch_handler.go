@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
-	"github.com/Rehtt/hamster-bin/internal/price"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"github.com/Rehtt/hamster-bin/internal/repository"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -30,33 +31,20 @@ type BatchPreStockItem struct {
 	SupplierName string `json:"supplier_name"`
 }
 
-func resolveCategory(tx *gorm.DB, id uint, name string) (uint, error) {
-	if id > 0 {
-		var c models.Category
-		if err := tx.First(&c, id).Error; err != nil {
-			return 0, errors.New("分类不存在")
-		}
-		return id, nil
+func resolveCategory(id uint) (uint, error) {
+	if id == 0 {
+		return 0, normalization.Invalid("category_id", "required", "请按 ID 选择启用分类，需要新分类请进入分类管理")
 	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return 0, errors.New("分类不能为空")
-	}
-	var c models.Category
-	if err := tx.Where("name = ?", name).First(&c).Error; err == nil {
-		return c.ID, nil
-	}
-	c = models.Category{Name: name}
-	if err := tx.Create(&c).Error; err != nil {
-		return 0, err
-	}
-	return c.ID, nil
+	return id, nil
 }
 func resolveSupplier(tx *gorm.DB, id *uint, name string) (*uint, error) {
 	if id != nil && *id > 0 {
 		var s models.Supplier
 		if err := tx.First(&s, *id).Error; err != nil {
-			return nil, errors.New("供应商不存在")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, normalization.Invalid("supplier_id", "invalid", "供应商不存在")
+			}
+			return nil, err
 		}
 		return id, nil
 	}
@@ -85,47 +73,34 @@ func (h *BatchHandler) CreateComponents(c *gin.Context) {
 	created := make([]models.Component, 0, len(req.Items))
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		components := repository.NewComponentRepository(tx)
-		logs := repository.NewStockLogRepository(tx)
 		for i := range req.Items {
 			item := &req.Items[i]
-			item.Name = strings.TrimSpace(item.Name)
-			if item.Name == "" {
-				return errors.New("第 " + itoa(i+1) + " 条名称不能为空")
+			if strings.TrimSpace(item.Name) == "" {
+				return batchItemError(i, normalization.Invalid("name", "required", "名称不能为空"))
 			}
 			if item.Quantity == nil || *item.Quantity < 0 {
-				return errors.New("第 " + itoa(i+1) + " 条库存数量必须显式填写非负整数")
+				return batchItemError(i, normalization.Invalid("stock_quantity", "required", "库存数量必须显式填写非负整数"))
 			}
 			item.StockQuantity = *item.Quantity
-			category, err := resolveCategory(tx, item.CategoryID, item.CategoryName)
+			category, err := resolveCategory(item.CategoryID)
 			if err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
+				return batchItemError(i, err)
 			}
 			supplier, err := resolveSupplier(tx, item.SupplierID, item.SupplierName)
 			if err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
+				return batchItemError(i, err)
 			}
 			item.CategoryID, item.SupplierID, item.Category, item.Supplier = category, supplier, nil, nil
-			if item.StockQuantity > 0 && item.TotalPriceCents > 0 {
-				item.UnitPriceMicro = price.UnitPriceMicro(item.TotalPriceCents, item.StockQuantity)
-			}
 			item.ID = 0
-			if err := components.AssignComponentNumberForCreate(&item.Component); err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
-			}
-			if err := tx.Create(&item.Component).Error; err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
-			}
-			if item.StockQuantity > 0 && item.TotalPriceCents > 0 {
-				if err := logs.Create(&models.StockLog{ComponentID: item.ID, ChangeAmount: item.StockQuantity, UnitPriceMicro: item.UnitPriceMicro, TotalPriceCents: item.TotalPriceCents, Reason: "初始入库"}); err != nil {
-					return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
-				}
+			if _, err := components.CreateWithInitialStock(&item.Component, item.TotalPriceCents); err != nil {
+				return batchItemError(i, err)
 			}
 			created = append(created, item.Component)
 		}
 		return nil
 	})
 	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		inventoryWriteError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": created})
@@ -143,45 +118,41 @@ func (h *BatchHandler) CreatePreStocks(c *gin.Context) {
 		repo := repository.NewPreStockRepository(tx)
 		for i := range req.Items {
 			item := &req.Items[i]
-			item.Name = strings.TrimSpace(item.Name)
-			if item.Name == "" {
-				return errors.New("第 " + itoa(i+1) + " 条名称不能为空")
+			if strings.TrimSpace(item.Name) == "" {
+				return batchItemError(i, normalization.Invalid("name", "required", "名称不能为空"))
 			}
 			if item.Quantity == nil || *item.Quantity < 0 {
-				return errors.New("第 " + itoa(i+1) + " 条数量必须显式填写非负整数")
+				return batchItemError(i, normalization.Invalid("expected_quantity", "required", "数量必须显式填写非负整数"))
 			}
 			item.ExpectedQuantity = *item.Quantity
-			category, err := resolveCategory(tx, item.CategoryID, item.CategoryName)
+			category, err := resolveCategory(item.CategoryID)
 			if err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
+				return batchItemError(i, err)
 			}
 			supplier, err := resolveSupplier(tx, item.SupplierID, item.SupplierName)
 			if err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
+				return batchItemError(i, err)
 			}
 			item.CategoryID, item.SupplierID, item.Category, item.Supplier, item.Component = category, supplier, nil, nil, nil
 			item.ID, item.Status = 0, repository.PreStockStatusPending
 			if err := repo.Create(&item.PreStock); err != nil {
-				return errors.New("第 " + itoa(i+1) + " 条：" + err.Error())
+				return batchItemError(i, err)
 			}
 			created = append(created, item.PreStock)
 		}
 		return nil
 	})
 	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		inventoryWriteError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": created})
 }
-func itoa(v int) string {
-	if v == 0 {
-		return "0"
+func batchItemError(index int, err error) error {
+	var validation *normalization.ValidationError
+	if errors.As(err, &validation) {
+		validation.Item = index + 1
+		return validation
 	}
-	b := make([]byte, 0, 10)
-	for v > 0 {
-		b = append([]byte{byte('0' + v%10)}, b...)
-		v /= 10
-	}
-	return string(b)
+	return fmt.Errorf("第 %d 条: %w", index+1, err)
 }

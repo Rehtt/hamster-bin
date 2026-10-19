@@ -41,12 +41,14 @@ func main() {
 
 	// 初始化解析器管理器
 	parserManager := parser.NewParserManager()
+	parserManager.SetStandardsReader(repository.NewNormalizationRepository(database.GetDB()))
 	llmClient := llm.NewClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 	parserManager.Register(parser.NewLCSCParser(llmClient)) // 注册立创商城解析器
 	parserManager.Register(parser.NewTaobaoParser())        // 注册淘宝解析器（示例）
 
 	// 设置路由
 	imageParser := parser.NewImageParser(llmClient)
+	imageParser.SetStandardsReader(repository.NewNormalizationRepository(database.GetDB()))
 	taskService := tasks.New(repository.NewTaskRepository(database.GetDB()), parserManager, cfg.TaskWorkers, time.Duration(cfg.TaskTimeoutSeconds)*time.Second,
 		tasks.WithImages(imageParser, tasks.NewImageStore(cfg.ImageDir)))
 	if err := taskService.Start(); err != nil {

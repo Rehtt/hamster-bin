@@ -155,7 +155,7 @@ func TestSDKWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := map[string]bool{"list_components": true, "get_component": true, "create_component": false, "update_component": false, "change_stock": false, "list_pre_stocks": true, "get_pre_stock": true, "create_pre_stock": false, "update_pre_stock": false, "confirm_pre_stock": false, "list_categories": true, "create_category": false, "update_category": false, "delete_category": false, "list_suppliers": true, "create_supplier": false, "list_stock_logs": true, "get_component_stock_logs": true, "get_stats": true}
+	expected := map[string]bool{"normalization_standards": true, "normalization_preview": true, "list_components": true, "get_component": true, "create_component": false, "update_component": false, "change_stock": false, "list_pre_stocks": true, "get_pre_stock": true, "create_pre_stock": false, "update_pre_stock": false, "confirm_pre_stock": false, "list_categories": true, "create_category": false, "update_category": false, "delete_category": false, "list_suppliers": true, "create_supplier": false, "list_stock_logs": true, "get_component_stock_logs": true, "get_stats": true}
 	if len(tools.Tools) != len(expected) {
 		t.Fatalf("tools=%d", len(tools.Tools))
 	}
@@ -192,7 +192,7 @@ func TestSDKWorkflow(t *testing.T) {
 			properties := schema["properties"].(map[string]any)
 			wantFields := 1
 			if tool.Name == "update_category" {
-				wantFields = 3
+				wantFields = 4
 			}
 			if len(properties) != wantFields || properties["id"].(map[string]any)["type"] != "integer" {
 				t.Fatalf("category mutation schema: %v", schema)
@@ -224,6 +224,7 @@ func TestSDKWorkflow(t *testing.T) {
 		}
 	}
 	cat := decode[models.Category](t, call(t, s, "create_category", map[string]any{"name": "电阻"}, false))
+	call(t, s, "update_category", map[string]any{"id": cat.ID, "status": "active"}, false)
 	supplier := decode[models.Supplier](t, call(t, s, "create_supplier", map[string]any{"name": "嘉立创"}, false))
 	same := decode[models.Supplier](t, call(t, s, "create_supplier", map[string]any{"name": "嘉立创"}, false))
 	if same.ID != supplier.ID {
@@ -305,6 +306,7 @@ func TestInvalidInputsAndRollback(t *testing.T) {
 	db, server := setup(t, true)
 	s := connect(t, server, "")
 	cat := decode[models.Category](t, call(t, s, "create_category", map[string]any{"name": "电容"}, false))
+	call(t, s, "update_category", map[string]any{"id": cat.ID, "status": "active"}, false)
 	c := decode[models.Component](t, call(t, s, "create_component", map[string]any{"name": "电容", "category_id": cat.ID, "stock_quantity": 10, "total_price_cents": 100}, false))
 	cases := []struct {
 		name string
@@ -561,6 +563,7 @@ func TestSDKCategoryMutations(t *testing.T) {
 	call(t, s, "delete_category", map[string]any{"id": child.ID}, true)
 	call(t, s, "update_category", map[string]any{"id": child.ID, "name": "不能重建"}, true)
 	// 零库存与已确认预入库分别阻止删除；业务错误通过 isError 返回。
+	call(t, s, "update_category", map[string]any{"id": root.ID, "status": "active"}, false)
 	call(t, s, "create_component", map[string]any{"name": "零库存", "category_id": root.ID, "stock_quantity": 0}, false)
 	call(t, s, "delete_category", map[string]any{"id": root.ID}, true)
 	pre := models.PreStock{Name: "已确认", CategoryID: other.ID, Status: "confirmed"}
@@ -574,4 +577,27 @@ func TestSDKCategoryMutations(t *testing.T) {
 	}
 	call(t, s, "update_category", map[string]any{"id": other.ID, "parent_id": root.ID}, true)
 	call(t, s, "create_category", map[string]any{"name": "循环", "parent_id": root.ID}, true)
+}
+
+func TestNormalizationToolsAndWriteConfirmation(t *testing.T) {
+	_, server := setup(t, true)
+	s := connect(t, server, "")
+	cat := decode[models.Category](t, call(t, s, "create_category", map[string]any{"name": "电阻"}, false))
+	if cat.Status != "pending" {
+		t.Fatal(cat)
+	}
+	call(t, s, "create_component", map[string]any{"name": "电阻", "category_id": cat.ID, "stock_quantity": 0}, true)
+	call(t, s, "update_category", map[string]any{"id": cat.ID, "status": "active"}, false)
+	call(t, s, "normalization_standards", map[string]any{}, false)
+	call(t, s, "normalization_preview", map[string]any{"name": "Resistor", "category_id": cat.ID}, false)
+	call(t, s, "create_component", map[string]any{"name": "Unknown", "category_id": cat.ID, "stock_quantity": 0}, true)
+	c := decode[models.Component](t, call(t, s, "create_component", map[string]any{"name": "Unknown", "category_id": cat.ID, "stock_quantity": 0, "package": "SOT23", "review_confirmations": map[string]string{"name": "Unknown"}}, false))
+	if len(c.Review) != 1 || c.Package != "SOT-23" {
+		t.Fatal(c)
+	}
+	call(t, s, "update_component", map[string]any{"id": c.ID, "name": "Changed", "review_confirmations": map[string]string{"name": "Unknown"}}, true)
+	call(t, s, "update_component", map[string]any{"id": c.ID, "description": ""}, false)
+	call(t, s, "update_category", map[string]any{"id": cat.ID, "status": "inactive"}, false)
+	call(t, s, "update_component", map[string]any{"id": c.ID, "location": "A1"}, false)
+	call(t, s, "create_pre_stock", map[string]any{"name": "电阻", "category_id": cat.ID, "expected_quantity": 1}, true)
 }

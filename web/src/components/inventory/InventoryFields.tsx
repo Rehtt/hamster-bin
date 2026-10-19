@@ -1,3 +1,6 @@
+import { NormalizationReview } from './NormalizationReview';
+import type { Category, ParsedComponentInfo, ReviewState } from '../../types';
+import { Link } from 'react-router-dom';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import { Input } from '../ui/Input';
@@ -9,14 +12,14 @@ import { SafeImage } from '../ui/SafeImage';
 import { calcUnitPriceMicro, formatMicro, yuanToCents } from '../../utils/price';
 // 表单视图模型；正式库存和预入库在各自页面转换为接口提交类型。
 export type InventoryFieldsValue = {
-  component_number?: string | null; name?: string; model?: string; manufacturer?: string;
+  review_confirmations?: Record<string,string>; component_number?: string | null; name?: string; model?: string; manufacturer?: string;
   value?: string; package?: string; supplier_part_number?: string; description?: string;
   location?: string; datasheet_url?: string; image_url?: string;
   quantity: number | null | undefined; category: string; supplier: string; totalPrice: string;
 };
-export function InventoryFields({ value, onChange, onSubmit, categories, suppliers, manufacturers, packages, locations, editing, preStock = false, imageControls, imagePreview, busy }: {
+export function InventoryFields({ value, onChange, onSubmit, categories, suppliers, manufacturers, packages, locations, editing, preStock = false, imageControls, imagePreview, busy, parsed, review }: {
   value: InventoryFieldsValue; onChange: (patch: Partial<InventoryFieldsValue>) => void; onSubmit: () => void;
-  categories: string[]; suppliers: string[]; manufacturers: string[]; packages: string[]; locations: string[];
+  review?: ReviewState[]; categories: Category[]; parsed?: ParsedComponentInfo; suppliers: string[]; manufacturers: string[]; packages: string[]; locations: string[];
   editing?: boolean; preStock?: boolean; imageControls?: ReactNode; imagePreview?: string; busy?: boolean;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -37,10 +40,12 @@ export function InventoryFields({ value, onChange, onSubmit, categories, supplie
     }
     onSubmit();
   };
-  const field = (key: keyof InventoryFieldsValue, label: string, placeholder = '', options?: string[]) => <div className="form-field" key={key}><Label htmlFor={`inventory-${key}`}>{label}{(key === 'name' || key === 'category') && <span aria-hidden="true" className="ml-1 text-destructive">*</span>}</Label>{options ? <SearchSelect id={`inventory-${key}`} label={label} value={String(value[key] || '')} onChange={v => onChange({ [key]: v })} creatable options={options.map(v => ({ value: v, label: v }))} placeholder={placeholder || `输入或选择${label}`} /> : <Input id={`inventory-${key}`} value={String(value[key] || '')} aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `error-${key}` : undefined} onChange={e => onChange({ [key]: e.target.value })} placeholder={placeholder} />}{errors[key] && <p role="alert" id={`error-${key}`} className="text-xs text-destructive">{errors[key]}</p>}</div>;
+  const field = (key: keyof InventoryFieldsValue, label: string, placeholder = '', options?: string[]) => <div className="form-field" key={key}><Label htmlFor={`inventory-${key}`}>{label}{(key === 'name' || key === 'category') && <span aria-hidden="true" className="ml-1 text-destructive">*</span>}</Label>{options ? <SearchSelect id={`inventory-${key}`} label={label} value={String(value[key] || '')} onChange={v => onChange({ [key]: v })} creatable={key !== 'category'} options={options.map(v => ({ value: v, label: v }))} placeholder={placeholder || `输入或选择${label}`} /> : <Input id={`inventory-${key}`} value={String(value[key] || '')} aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `error-${key}` : undefined} onChange={e => onChange({ [key]: e.target.value })} placeholder={placeholder} />}{errors[key] && <p role="alert" id={`error-${key}`} className="text-xs text-destructive">{errors[key]}</p>}</div>;
   return <form id="inventory-form" noValidate onSubmit={submit} className="space-y-4"><fieldset disabled={busy} className="min-w-0 space-y-4">
+    {!!review?.length && <p className="text-xs">资料复核：{review.map(r => `${r.field === 'name' ? '名称' : '描述'}待整理，${r.confirmed ? '已确认保留原文' : '待确认'}`).join('；')}</p>}
+    <NormalizationReview value={value} onChange={onChange} parsed={parsed} />
     <details className="form-section" open><summary>基本资料<span className="ml-auto mr-4 text-xs font-normal text-muted-foreground">必填项标注 *</span></summary><div className="form-grid">
-      {field('name', '名称', '例如：贴片电阻 10kΩ')}{field('category', '分类', '', categories)}
+      {field('name', '名称', '例如：贴片电阻 10kΩ')}<div className="form-field"><Label htmlFor="inventory-category">分类 *</Label><SearchSelect id="inventory-category" label="分类" value={value.category} onChange={category => onChange({category})} options={categories.filter(c => c.status === 'active' || String(c.id) === value.category).map(c => ({value:String(c.id),label:c.name + (c.status === 'active' ? '' : '（未启用，仅保留原关联）')}))} placeholder="选择启用分类" /><Link to="/categories" className="text-xs text-primary">审核或新增分类 →</Link>{errors.category && <p role="alert">{errors.category}</p>}</div>
       {field('component_number', '元件编号', '留空则保存时自动生成')}{field('model', '厂家型号', '例如 RC0603FR-0710KL')}
       {field('manufacturer', '制造商', '', manufacturers)}{field('value', '参数值', '例如 10kΩ ±1%')}{field('package', '封装', '', packages)}
     </div></details>

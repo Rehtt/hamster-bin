@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"github.com/Rehtt/hamster-bin/internal/price"
 	"github.com/Rehtt/hamster-bin/internal/repository"
 	"github.com/Rehtt/hamster-bin/internal/version"
@@ -63,7 +64,7 @@ func validID(id uint) error {
 	return nil
 }
 func (d DetailsInput) component(name string, category uint) models.Component {
-	return models.Component{Name: name, CategoryID: category, ComponentNumber: &d.ComponentNumber, Model: d.Model, Manufacturer: d.Manufacturer, Value: d.Value, Package: d.Package, SupplierID: d.SupplierID, SupplierPartNumber: d.SupplierPartNumber, Description: d.Description, Location: d.Location, DatasheetURL: d.DatasheetURL, ImageURL: d.ImageURL}
+	return models.Component{ReviewConfirmations: d.ReviewConfirmations, Name: name, CategoryID: category, ComponentNumber: &d.ComponentNumber, Model: d.Model, Manufacturer: d.Manufacturer, Value: d.Value, Package: d.Package, SupplierID: d.SupplierID, SupplierPartNumber: d.SupplierPartNumber, Description: d.Description, Location: d.Location, DatasheetURL: d.DatasheetURL, ImageURL: d.ImageURL}
 }
 
 func newServer(db *gorm.DB) *sdk.Server {
@@ -101,7 +102,7 @@ func newServer(db *gorm.DB) *sdk.Server {
 		if err := validID(in.ID); err != nil {
 			return result{}, err
 		}
-		return data(repository.NewComponentRepository(db).PatchDetails(in.ID, in.updates()))
+		return data(repository.NewComponentRepository(db).PatchDetails(in.ID, in.updates(), in.ReviewConfirmations))
 	})
 	register(s, db, "change_stock", "变更库存：amount 正数入库、负数出库、禁止为零。入库总价使用整数分；出库成本按现有参考单价自动计算。记录流水并返回更新后的元件。", false, true, func(db *gorm.DB, in ChangeStockInput) (result, error) {
 		if err := validID(in.ID); err != nil {
@@ -136,7 +137,7 @@ func newServer(db *gorm.DB) *sdk.Server {
 	})
 	register(s, db, "create_pre_stock", "创建待入库记录并占用编号，不计入正式库存；名称、分类 ID、非负预计数量必填，总价为整数分。", false, false, func(db *gorm.DB, in CreatePreStockInput) (result, error) {
 		c := in.DetailsInput.component(in.Name, in.CategoryID)
-		p := models.PreStock{CategoryID: c.CategoryID, ComponentNumber: c.ComponentNumber, Name: c.Name, Model: c.Model, Manufacturer: c.Manufacturer, Value: c.Value, Package: c.Package, SupplierID: c.SupplierID, SupplierPartNumber: c.SupplierPartNumber, Description: c.Description, Location: c.Location, DatasheetURL: c.DatasheetURL, ImageURL: c.ImageURL, ExpectedQuantity: in.ExpectedQuantity, TotalPriceCents: in.TotalPriceCents}
+		p := models.PreStock{ReviewConfirmations: c.ReviewConfirmations, CategoryID: c.CategoryID, ComponentNumber: c.ComponentNumber, Name: c.Name, Model: c.Model, Manufacturer: c.Manufacturer, Value: c.Value, Package: c.Package, SupplierID: c.SupplierID, SupplierPartNumber: c.SupplierPartNumber, Description: c.Description, Location: c.Location, DatasheetURL: c.DatasheetURL, ImageURL: c.ImageURL, ExpectedQuantity: in.ExpectedQuantity, TotalPriceCents: in.TotalPriceCents}
 		return data(repository.NewPreStockRepository(db).CreateValidated(&p))
 	})
 	register(s, db, "update_pre_stock", "局部编辑 pending 预入库；省略字段保持原值，可修改预计数量、总价（整数分）；supplier_id=0 解除关联，已确认记录不可编辑。", false, true, func(db *gorm.DB, in UpdatePreStockInput) (result, error) {
@@ -146,19 +147,19 @@ func newServer(db *gorm.DB) *sdk.Server {
 		updates := in.updates()
 		put(updates, "expected_quantity", in.ExpectedQuantity)
 		put(updates, "total_price_cents", in.TotalPriceCents)
-		return data(repository.NewPreStockRepository(db).PatchPending(in.ID, updates))
+		return data(repository.NewPreStockRepository(db).PatchPending(in.ID, updates, in.ReviewConfirmations))
 	})
-	register(s, db, "confirm_pre_stock", "确认待入库：事务内创建正式元件、写入流水、标记已确认；同一记录只能确认一次。", false, true, func(db *gorm.DB, in IDInput) (result, error) {
+	register(s, db, "confirm_pre_stock", "确认待入库：事务内创建正式元件、写入流水、标记已确认；同一记录只能确认一次。", false, true, func(db *gorm.DB, in ConfirmPreStockInput) (result, error) {
 		if err := validID(in.ID); err != nil {
 			return result{}, err
 		}
-		return data(repository.NewPreStockRepository(db).ConfirmValidated(in.ID))
+		return data(repository.NewPreStockRepository(db).Confirm(in.ID, in.ReviewConfirmations))
 	})
 	register(s, db, "list_categories", "查询全部分类及父分类 ID。", true, false, func(db *gorm.DB, _ EmptyInput) (result, error) {
 		return data(repository.NewCategoryRepository(db).GetAll())
 	})
 	register(s, db, "create_category", "创建分类，可关联已存在的父分类。", false, false, func(db *gorm.DB, in CreateCategoryInput) (result, error) {
-		c := models.Category{Name: in.Name, ParentID: in.ParentID}
+		c := models.Category{Status: in.Status, Name: in.Name, ParentID: in.ParentID}
 		err := repository.NewCategoryRepository(db).Create(&c)
 		return data(c, err)
 	})
@@ -166,7 +167,7 @@ func newServer(db *gorm.DB) *sdk.Server {
 		if err := validID(in.ID); err != nil {
 			return result{}, err
 		}
-		return data(repository.NewCategoryRepository(db).Update(in.ID, repository.CategoryPatch{Name: in.Name, ParentID: in.ParentID}))
+		return data(repository.NewCategoryRepository(db).Update(in.ID, repository.CategoryPatch{Status: in.Status, Name: in.Name, ParentID: in.ParentID}))
 	})
 	register(s, db, "delete_category", "按 ID 删除空分类；关联元件（包括零库存）、任意状态的预入库记录或子分类时拒绝删除，不迁移或级联删除关联数据。", false, true, func(db *gorm.DB, in IDInput) (result, error) {
 		if err := validID(in.ID); err != nil {
@@ -214,6 +215,16 @@ func newServer(db *gorm.DB) *sdk.Server {
 			in.Range = repository.StatsRangeMonth
 		}
 		return data(repository.NewStatsRepository(db).GetDashboardStats(in.Range))
+	})
+	register(s, db, "normalization_standards", "读取版本化正式规范及独立历史候选；历史值不用于自动规范化。", true, false, func(db *gorm.DB, _ EmptyInput) (result, error) {
+		return data(repository.NewNormalizationRepository(db).Standards(db.Statement.Context))
+	})
+	register(s, db, "normalization_preview", "本地确定性预览，不保存、不联网；返回候选、变化及问题。", true, false, func(db *gorm.DB, in PreviewNormalizationInput) (result, error) {
+		s, err := repository.NewNormalizationRepository(db).Standards(db.Statement.Context)
+		if err != nil {
+			return result{}, err
+		}
+		return data(normalization.Preview(normalization.Fields{Name: in.Name, Description: in.Description, Model: in.Model, Manufacturer: in.Manufacturer, Package: in.Package, CategoryName: in.CategoryName, CategoryID: in.CategoryID}, s), nil)
 	})
 	return s
 }

@@ -196,7 +196,8 @@ export default function Components() {
 
   const [isMobile, setIsMobile] = useState(false);
   const formGuard = useFormGuard({ form: formData, category: categoryInput, supplier: supplierInput, price: formTotalPriceYuan, file: selectedFile?.name || '' });
-  const closeForm = () => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); };
+  const normalizationSession = useRef(0);
+  const closeForm = () => { normalizationSession.current++; parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); };
   const cancelForm = async () => { if (!saving && await formGuard.allowClose()) closeForm(); };
 
 
@@ -209,17 +210,19 @@ export default function Components() {
   const parsedInfoToFormData = parsedComponentFields;
 
   type ParseSnapshot = { platformCode: string; form: ComponentDraft; category: string; supplier: string; price: string; preview: string; file: File | null };
-  type PhotoDraft = ParseSnapshot & { platformCode: string };
+  type PhotoDraft = ParseSnapshot & { platformCode: string; parsed?: ParsedComponentInfo };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
-    setSupplierReference(component);
+    if (!component.normalization) { const session = normalizationSession.current; void client.post('/normalization/preview', component).then(res => { if (session === normalizationSession.current) applyParsedComponent({ ...component, ...res.data.data.candidate, normalization: res.data.data.normalization }, quantity, snapshot); }).catch(() => toast.error('规范预览失败，请重试')); return; }
+
+    setSupplierReference({...component, quantity});
     setPlatformCode(prev => !snapshot || prev === snapshot.platformCode ? component.platform_code || prev : prev);
     const parsedForm: Partial<Component> = parsedInfoToFormData(component);
     if (snapshot && selectedFile !== snapshot.file) delete parsedForm.image_url;
     if (quantity !== undefined && quantity >= 0) parsedForm.stock_quantity = quantity;
-    const supplier = getSupplierNameFromPlatform(component.platform_name);
-    if (supplier) setSupplierInput(prev => !snapshot || prev === snapshot.supplier ? supplier : prev);
+    const supplier = component.supplier_name || getSupplierNameFromPlatform(component.platform_name);
+    if (supplier) setSupplierInput(prev => !prev && (!snapshot || prev === snapshot.supplier) ? supplier : prev);
     const category = component.category_name || component.category?.name;
-    if (category) setCategoryInput(prev => !snapshot || prev === snapshot.category ? category : prev);
+    if (category) setCategoryInput(prev => !prev && (!snapshot || prev === snapshot.category) && component.category_id ? String(component.category_id) : prev);
     setFormData(prev => mergeParsed(prev, parsedForm, snapshot?.form));
     if (component.image_url && (!snapshot || selectedFile === snapshot.file)) {
       setPreviewUrl(prev => !snapshot || prev === snapshot.preview ? '' : prev);
@@ -653,7 +656,8 @@ export default function Components() {
 
   // Form Handlers
   const openForm = (component?: Component) => {
-    formGuard.reset({ form: component || { stock_quantity: 0 }, category: component?.category?.name || '', supplier: component?.supplier?.name || '', price: '', file: '' });
+    normalizationSession.current++;
+    formGuard.reset({ form: component || { stock_quantity: 0 }, category: component ? String(component.category_id) : '', supplier: component?.supplier?.name || '', price: '', file: '' });
     parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset();
     setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
@@ -670,7 +674,7 @@ export default function Components() {
           setPreviewUrl('');
       }
       setFormData(component);
-      setCategoryInput(component.category?.name || '');
+      setCategoryInput(String(component.category_id));
       setSupplierInput(component.supplier?.name || '');
       setFormTotalPriceYuan('');
     } else {
@@ -710,8 +714,8 @@ export default function Components() {
       supplier: component.supplier,
     };
     setFormData(copy);
-    formGuard.reset({ form: copy, category: component.category?.name || '', supplier: component.supplier?.name || '', price: '', file: '' });
-    setCategoryInput(component.category?.name || '');
+    formGuard.reset({ form: copy, category: String(component.category_id), supplier: component.supplier?.name || '', price: '', file: '' });
+    setCategoryInput(String(component.category_id));
     setSupplierInput(component.supplier?.name || '');
     setFormTotalPriceYuan('');
     setPreviewUrl(component.image_url || '');
@@ -736,10 +740,10 @@ export default function Components() {
     setIsCameraOpen(false);
   };
 
-  const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
+  const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode, parsed: supplierReference });
   const loadPhotoDraft = (draft: PhotoDraft) => {
     parseTask.reset(); setSupplierReference(undefined);
-    setFormData(draft.form); setCategoryInput(draft.category); setSupplierInput(draft.supplier);
+    setSupplierReference(draft.parsed); setFormData(draft.form); setCategoryInput(draft.category); setSupplierInput(draft.supplier);
     setFormTotalPriceYuan(draft.price); setSelectedFile(draft.file); setPreviewUrl(draft.preview);
     setPlatformCode(draft.platformCode);
   };
@@ -759,9 +763,9 @@ export default function Components() {
         }
         const res = await client.post('/components/batch', { items: drafts.map(draft => ({
           ...draft.form, id: undefined, category: undefined, supplier: undefined,
-          category_id: undefined, supplier_id: undefined,
+          supplier_id: undefined,
           component_number: draft.form.component_number?.trim() || undefined,
-          category_name: draft.category.trim(), supplier_name: draft.supplier.trim(),
+          category_id: Number(draft.category), supplier_name: draft.supplier.trim(),
           total_price_cents: yuanToCents(draft.price),
         })) });
         const created = res.data.data as Component[];
@@ -784,21 +788,8 @@ export default function Components() {
         return;
       }
 
-      let categoryId = categories.find(c => c.name.toLowerCase() === categoryInput.trim().toLowerCase())?.id;
-      
-      if (!categoryId) {
-        // Auto create category
-        try {
-           const res = await client.post('/categories', { name: categoryInput.trim() });
-           categoryId = res.data.data?.id;
-           if (!categoryId) throw new Error('创建分类失败');
-           toast.success(`自动创建分类: ${categoryInput}`);
-           await fetchCategories(); // Refresh categories
-        } catch {
-           toast.error('自动创建分类失败');
-           return;
-        }
-      }
+      const categoryId = Number(categoryInput);
+      if (!categories.some(c => c.id === categoryId && (c.status === 'active' || c.id === editingComponent?.category_id))) { toast.error('请选择启用分类，需要新分类请进入分类管理'); return; }
 
       let supplierId: number | null = null;
       const supplierName = supplierInput.trim();
@@ -820,7 +811,7 @@ export default function Components() {
         }
       }
 
-      const data = componentSaveInput(formData, Number(categoryId), supplierId, yuanToCents(formTotalPriceYuan), !editingComponent, editingComponent?.created_at);
+      const data = componentSaveInput(formData, Number(categoryId), supplierId, yuanToCents(formTotalPriceYuan), !editingComponent);
       const response = await inventoryApi.saveComponent(editingComponent?.id, data);
       const savedId = response.data.data.id;
       toast.success(editingComponent ? '更新成功' : '添加成功');
@@ -867,12 +858,13 @@ export default function Components() {
     const first = items[0];
     if (editingComponent) {
       applyParsedComponent(photoComponentInfo(first), first.quantity);
-      setCategoryInput(first.category_name); setSupplierInput(first.supplier_name);
+      setSupplierInput(prev => prev || first.supplier_name);
       return;
     }
     const drafts: PhotoDraft[] = items.map((item, index) => ({
-      form: { ...mergeParsed(index === 0 ? formData : {}, parsedInfoToFormData(photoComponentInfo(item))), stock_quantity: item.quantity },
-      category: item.category_name, supplier: item.supplier_name,
+      parsed: {...photoComponentInfo(item),quantity:item.quantity},
+      form: { ...mergeParsed(index === 0 ? formData : {}, parsedInfoToFormData(photoComponentInfo(item))), stock_quantity: index === 0 && formData.stock_quantity ? formData.stock_quantity : item.quantity, review_confirmations:item.review_confirmations },
+      category: index === 0 && categoryInput ? categoryInput : String(item.category_id || ''), supplier: index === 0 && supplierInput ? supplierInput : item.supplier_name,
       price: index === 0 ? formTotalPriceYuan : '', preview: index === 0 ? previewUrl : '',
       file: index === 0 ? selectedFile : null, platformCode: item.supplier_part_number,
     }));
@@ -1174,7 +1166,7 @@ export default function Components() {
             if (category !== undefined) setCategoryInput(category); if (supplier !== undefined) setSupplierInput(supplier); if (totalPrice !== undefined) setFormTotalPriceYuan(totalPrice);
             setFormData(prev => ({ ...prev, ...fields }));
             if ('image_url' in fields) { setPreviewUrl(''); setSelectedFile(null); }
-          }} onSubmit={() => void handleFormSubmit()} categories={categories.map(c => c.name)} suppliers={suppliers.map(s => s.name)} manufacturers={manufacturerOptions} packages={packageOptions} locations={locationOptions} editing={!!editingComponent} busy={saving} imagePreview={previewUrl}
+          }} onSubmit={() => void handleFormSubmit()} categories={categories} parsed={supplierReference} suppliers={suppliers.map(s => s.name)} manufacturers={manufacturerOptions} packages={packageOptions} locations={locationOptions} editing={!!editingComponent} busy={saving} review={editingComponent?.review} imagePreview={previewUrl}
             imageControls={<div className="flex flex-wrap gap-2"><input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileSelect} /><Button variant="outline" onClick={() => fileInputRef.current?.click()}><Upload className="mr-2 size-4" />上传图片</Button><Button variant="outline" onClick={() => setIsCameraOpen(true)}><Camera className="mr-2 size-4" />拍摄图片</Button></div>} />
         </div>
       </Modal>

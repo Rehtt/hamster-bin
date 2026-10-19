@@ -4,8 +4,10 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/Rehtt/hamster-bin/internal/models"
+	"github.com/Rehtt/hamster-bin/internal/normalization"
 	"github.com/Rehtt/hamster-bin/internal/price"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -165,12 +167,30 @@ func (r *ComponentRepository) GetByID(id uint) (*models.Component, error) {
 
 // Create 创建元件
 func (r *ComponentRepository) Create(component *models.Component) error {
-	return r.db.Create(component).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := validateInventory(tx, component.Name, component.CategoryID, component.SupplierID, component.StockQuantity, 0); err != nil {
+			return err
+		}
+		review, err := validateMaterials(tx, componentFields(component), normalization.Fields{}, nil, component.ReviewConfirmations, true, false)
+		if err != nil {
+			return err
+		}
+		component.ID = 0
+		component.CreatedAt = time.Time{}
+		component.UpdatedAt = time.Time{}
+		component.Review = review
+		component.ReviewConfirmations = nil
+		component.Package = normalization.Package(component.Package)
+		component.Category = nil
+		component.Supplier = nil
+		return tx.Create(component).Error
+	})
 }
 
 // Update 更新元件
 func (r *ComponentRepository) Update(component *models.Component) error {
-	return r.db.Save(component).Error
+	_, err := r.PatchDetails(component.ID, detailMap(component), component.ReviewConfirmations)
+	return err
 }
 
 // Delete 删除元件

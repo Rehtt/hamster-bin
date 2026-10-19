@@ -27,7 +27,7 @@ func TestTaskAPIAndLegacyCompatibility(t *testing.T) {
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	defer sqlDB.Close()
-	if err := db.AutoMigrate(&models.Task{}); err != nil {
+	if err := db.AutoMigrate(&models.Task{}, &models.Category{}, &models.Component{}, &models.PreStock{}); err != nil {
 		t.Fatal(err)
 	}
 	manager := parser.NewParserManager()
