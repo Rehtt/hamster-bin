@@ -21,14 +21,25 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+          package_json_file: web/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Install Frontend Dependencies
         working-directory: web
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Frontend
+        run: make test-frontend
 
       - name: Build Frontend
         run: make build-frontend

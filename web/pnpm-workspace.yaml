@@ -1,0 +1,4 @@
+# 安装显式执行；运行脚本时不隐式修改依赖或锁文件。
+verifyDepsBeforeRun: error
+allowBuilds:
+  esbuild: true

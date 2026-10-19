@@ -48,7 +48,14 @@ start: build ## 编译并运行
 .PHONY: build-frontend
 build-frontend: ## 构建前端页面
 	@echo "$(COLOR_GREEN)>>> 构建前端页面...$(COLOR_RESET)"
-	@cd $(WEB_DIR) && npm run build
+	@cd $(WEB_DIR) && pnpm run build
+
+.PHONY: install-frontend test-frontend
+install-frontend: ## 按冻结锁文件安装前端依赖（Node.js 24 / pnpm 11.3.0）
+	@cd $(WEB_DIR) && pnpm install --frozen-lockfile
+
+test-frontend: ## 前端静态检查与登录、解析回归测试
+	@cd $(WEB_DIR) && pnpm run lint && pnpm run typecheck && pnpm run test:auth && pnpm run test:parser
 
 ##@ 构建命令
 

@@ -4,6 +4,8 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import { ThemeProvider } from './context/ThemeProvider';
+import { ConfirmProvider } from './components/ui/ConfirmProvider';
 import { TaskProvider } from './context/TaskContext';
 
 const Login = lazy(() => import('./pages/Login'));
@@ -24,7 +26,7 @@ function PageLoader() {
 
 function App() {
   return (
-    <AuthProvider>
+    <ThemeProvider><ConfirmProvider><AuthProvider>
       <Router>
         <Suspense fallback={<PageLoader />}>
           <Routes>
@@ -48,9 +50,9 @@ function App() {
             />
           </Routes>
         </Suspense>
-        <Toaster position="top-right" />
+        <Toaster position="top-right" toastOptions={{ style: { background: 'hsl(var(--card))', color: 'hsl(var(--foreground))', border: '1px solid hsl(var(--border))' } }} />
       </Router>
-    </AuthProvider>
+    </AuthProvider></ConfirmProvider></ThemeProvider>
   );
 }
 

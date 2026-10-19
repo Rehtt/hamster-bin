@@ -21,3 +21,7 @@ temp/
 certs/
 *.md
 !web/README.md
+
+**/.pnpm-store/
+web/playwright-report/
+web/test-results/

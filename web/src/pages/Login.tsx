@@ -5,6 +5,8 @@ import { useAuth } from '../context/useAuth';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
+import { ThemeSelect } from '../components/ThemeSelect';
+import { Package, ScanLine, ArrowRight } from 'lucide-react';
 import AuthError from '../components/AuthError';
 
 export default function Login() {
@@ -14,6 +16,8 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => { document.title = '登录 · Hamster Bin'; }, []);
 
   useEffect(() => {
     if (searchParams.has('oauth_error')) {
@@ -39,6 +43,7 @@ export default function Login() {
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     try {
       await login(username, password);
@@ -58,13 +63,15 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <Card className="w-full max-w-md">
+    <div className="relative grid min-h-dvh bg-background lg:grid-cols-2">
+      <div className="absolute right-5 top-5 z-10"><ThemeSelect /></div>
+      <section className="relative hidden flex-col justify-between overflow-hidden border-r bg-card p-12 lg:flex"><LinkBrand /><div className="max-w-lg"><div className="mb-8 flex size-20 items-center justify-center rounded-3xl bg-primary/10 text-primary"><Package className="size-10" strokeWidth={1.25} /></div><p className="text-xs font-medium tracking-[0.25em] text-primary">A PLACE FOR EVERY COMPONENT</p><h1 className="mt-5 text-4xl font-semibold leading-snug tracking-tight">每一颗元件，<br />都有自己的位置。</h1><p className="mt-6 max-w-sm text-base leading-8 text-muted-foreground">整理你的元件库，从容开始下一次创作。查询、采购与库存记录，在一个工作空间完成。</p><div className="mt-8 inline-flex items-center gap-3 rounded-lg border bg-background px-4 py-3 text-sm text-muted-foreground"><ScanLine className="size-5 text-primary" />扫码或拍照，让入库更轻松<ArrowRight className="size-4" /></div></div><p className="text-xs text-muted-foreground">Hamster Bin · 电子元件库存管理</p></section>
+      <div className="flex items-center justify-center px-6 py-20"><Card className="w-full max-w-[400px] border-0 bg-transparent shadow-none">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <img src="/logo.svg" alt="Logo" className="h-12 w-12" />
+            <img src="/logo.svg" alt="Hamster Bin" className="h-12 w-12" />
           </div>
-          <CardTitle>登录库存管理系统</CardTitle>
+          <CardTitle className="text-2xl">欢迎回到 Hamster Bin</CardTitle><p className="pt-2 text-sm text-muted-foreground">登录库存管理系统，继续管理你的元件</p>
         </CardHeader>
         <CardContent>
           {oauthError && (
@@ -113,7 +120,9 @@ export default function Login() {
             </Button>
           </form>}
         </CardContent>
-      </Card>
+      </Card></div>
     </div>
   );
 }
+
+function LinkBrand() { return <div className="flex items-center gap-3"><img src="/logo.svg" alt="" className="size-10" /><span className="text-xl font-bold tracking-tight">Hamster Bin</span></div>; }

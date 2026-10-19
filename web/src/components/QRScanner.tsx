@@ -40,7 +40,9 @@ export default function QRScanner({ onScan, autoStart = false }: QRScannerProps)
   const [isScanning, setIsScanning] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scanHandledRef = useRef(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const autoStarted = useRef(false);
+  const [error, setError] = useState('');
+  const lifetime = useRef(0);
 
   const ensureScanner = useCallback(() => {
     if (!scannerRef.current) {
@@ -83,6 +85,8 @@ export default function QRScanner({ onScan, autoStart = false }: QRScannerProps)
     if (scannerRef.current?.isScanning) return;
 
     scanHandledRef.current = false;
+    setError('');
+    const generation = lifetime.current;
     try {
       const scanner = ensureScanner();
       setIsScanning(true);
@@ -92,33 +96,25 @@ export default function QRScanner({ onScan, autoStart = false }: QRScannerProps)
         handleScanSuccess,
         () => {}
       );
+      if (generation !== lifetime.current && scanner.isScanning) await scanner.stop();
     } catch (err) {
       console.error(err);
-      toast.error('无法启动摄像头');
+      setError('无法启动摄像头，请检查浏览器权限，或选择二维码图片。');
       setIsScanning(false);
       scanHandledRef.current = false;
     }
   }, [ensureScanner, handleScanSuccess]);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-  }, []);
+    if (!autoStart || autoStarted.current) return;
+    const timer = window.setTimeout(() => { autoStarted.current = true; void startScanning(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [autoStart, startScanning]);
 
   useEffect(() => {
-    if (autoStart && !isScanning) {
-      const startTimer = window.setTimeout(() => {
-        void startScanning();
-      }, 0);
-
-      return () => window.clearTimeout(startTimer);
-    }
-  }, [autoStart, isScanning, startScanning]);
-
-  useEffect(() => {
+    const generation = lifetime;
     return () => {
+      generation.current++;
       const scanner = scannerRef.current;
       if (scanner?.isScanning) {
         scanner.stop().catch(console.error);
@@ -130,6 +126,7 @@ export default function QRScanner({ onScan, autoStart = false }: QRScannerProps)
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       try {
+        await stopScanning();
         const scanner = ensureScanner();
         const result = await scanner.scanFile(file, true);
         if (scanHandledRef.current) return;
@@ -145,6 +142,7 @@ export default function QRScanner({ onScan, autoStart = false }: QRScannerProps)
 
   return (
     <div className="space-y-4">
+      {error && <p role="alert" className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
       <div id={SCANNER_ELEMENT_ID} className="w-full overflow-hidden rounded-lg border"></div>
       <div className="flex justify-center gap-2">
         {!isScanning ? (
@@ -152,17 +150,9 @@ export default function QRScanner({ onScan, autoStart = false }: QRScannerProps)
         ) : (
           <Button variant="destructive" onClick={() => void stopScanning()}>停止扫描</Button>
         )}
-        {!isMobile && (
-          <div className="relative">
-            <input
-              type="file"
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              accept="image/*"
-              onChange={handleFileUpload}
-            />
-            <Button variant="secondary">上传图片</Button>
-          </div>
-        )}
+        <label className="relative inline-flex h-10 cursor-pointer items-center rounded-md border bg-secondary px-4 text-sm font-medium focus-within:ring-2 focus-within:ring-ring">
+          <input aria-label="上传二维码图片" type="file" className="absolute inset-0 size-full cursor-pointer opacity-0" accept="image/*" onChange={handleFileUpload} />上传图片
+        </label>
       </div>
     </div>
   );

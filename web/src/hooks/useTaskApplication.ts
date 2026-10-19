@@ -1,3 +1,4 @@
+import { useConfirm } from '../context/confirm';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
@@ -5,6 +6,7 @@ import client from '../api/client';
 import type { ParseTask, TaskRequest } from '../types';
 
 export function useTaskApplication<T>(source: TaskRequest['source'], onApply: (task: ParseTask, record?: T) => void) {
+  const confirm = useConfirm();
   const [params, setParams] = useSearchParams();
   const taskID = params.get('applyTask');
   useEffect(() => {
@@ -24,7 +26,7 @@ export function useTaskApplication<T>(source: TaskRequest['source'], onApply: (t
           } catch (error) {
             if ((error as { response?: { status?: number } }).response?.status !== 404 && (error as Error).message !== 'confirmed') throw error;
             if (disposed) return;
-            if (!confirm('目标记录已删除或预入库已确认，是否将解析结果用于新增表单？')) return;
+            if (!await confirm('目标记录已删除或预入库已确认，是否将解析结果用于新增表单？')) return;
           }
         }
         if (!disposed) onApply(task, record);

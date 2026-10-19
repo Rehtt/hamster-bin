@@ -28,6 +28,14 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 - 可选远程 MCP：外部 AI 客户端通过独立 Bearer Token 查询和管理元件、预入库、入出库及统计。
 - 单文件部署：生产构建可将 React 前端嵌入 Go 二进制，便于在内网或个人服务器运行。
 
+## 界面与操作
+
+默认使用浅色后台界面，可在右上角切换深色或跟随系统，并保存主题选择。桌面提供可收起侧栏、元件表格与资料抽屉，手机提供抽屉导航、摘要卡片、扫码和全屏录入表单。
+
+元件支持统一关键词搜索、分类与高级分字段筛选，已应用条件可逐项移除；筛选、分页和排序保存在地址栏。点击元件名称查看资料、库存、价格和最近流水；出入库显示变更前后数量和金额预览。新增/编辑共用分组表单，固定保存区、自动定位校验错误，未保存修改关闭前确认。预入库用状态标签切换，任务详情优先展示可读结果，JSON 与诊断折叠展示。
+
+前端开发与浏览器回归测试详见 [web/README.md](web/README.md)。Tailwind CSS 4 面向现代浏览器，最低要求为 Safari 16.4、Chrome 111、Firefox 128（[官方兼容说明](https://tailwindcss.com/docs/compatibility)）。
+
 ## 项目状态
 
 项目仍在持续迭代中，适合个人库存、实验室轻量管理和自托管使用。当前默认使用 SQLite，也可连接外部 MySQL/PostgreSQL；未内置多用户权限模型。如需公网部署，建议启用 HTTPS、强密码和足够随机的 `JWT_SECRET`。
@@ -46,8 +54,9 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 
 - React 19
 - TypeScript
-- Vite
-- Tailwind CSS
+- Vite 7
+- Tailwind CSS 4（官方 Vite 插件）
+- Radix UI / cmdk
 - Axios
 - Lucide React
 
@@ -56,8 +65,8 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 ### 环境要求
 
 - Go 1.25.6+
-- Node.js 20.19+ 或 22.12+
-- npm
+- Node.js 24
+- pnpm 11.3.0（首次可运行 `npm install --global pnpm@11.3.0`）
 
 ### 获取代码
 
@@ -81,8 +90,8 @@ make run
 
 ```bash
 cd web
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm run dev
 ```
 
 前端开发服务器通常监听 `http://localhost:5173`，API 请求会使用 `/api/v1` 前缀访问后端。
@@ -93,8 +102,8 @@ Hamster Bin 支持单文件部署。生产模式下需要先构建前端，使�
 
 ```bash
 cd web
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm run build
 cd ..
 make build
 ./hamster-bin
@@ -343,11 +352,15 @@ make build-all       # 构建 Linux、Windows、macOS 发布文件
 
 ```bash
 cd web
-npm run dev      # 开发服务
-npm run build    # 类型检查并构建
-npm run lint     # ESLint 检查
-npm run test:auth # 登录入口、路由保护与错误展示渲染测试
-npm run preview  # 预览构建结果
+pnpm run dev      # 开发服务
+pnpm run build    # 类型检查并构建
+pnpm run lint     # ESLint 检查
+pnpm run test:auth # 登录入口、路由保护与错误展示渲染测试
+pnpm run test:parser # 解析、照片草稿与任务删除回归
+pnpm run typecheck   # TypeScript 检查
+pnpm exec playwright install chromium
+pnpm run test:e2e    # 浏览器关键流程与响应式回归
+pnpm run preview  # 预览构建结果
 ```
 
 后端测试：
@@ -406,9 +419,9 @@ go fix ./...
 go fmt ./...
 go test . ./cmd/... ./internal/...
 cd web
-npm run lint
-npm run test:parser
-npm run build
+pnpm run lint
+pnpm run test:parser
+pnpm run build
 cd ..
 make build
 ```

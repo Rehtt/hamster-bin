@@ -64,7 +64,7 @@ export function BatchStockOutModal({
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [failures, setFailures] = useState<BatchStockOutFailure[]>([]);
-  const searchTimerRef = useRef<number | null>(null);
+  const submitLock = useRef(false);
 
   const resetForm = useCallback((components: Component[]) => {
     setRows(components.map(component => ({ component, quantity: 1 })));
@@ -84,32 +84,17 @@ export function BatchStockOutModal({
   useEffect(() => {
     if (!isOpen) return;
     const query = searchQuery.trim();
-    if (searchTimerRef.current) {
-      window.clearTimeout(searchTimerRef.current);
-    }
-    if (!query) {
-      setSearchResults([]);
-      setIsSearching(false);
-      return;
-    }
+    const controller = new AbortController();
+    if (!query) { setSearchResults([]); setIsSearching(false); return; }
     setIsSearching(true);
-    searchTimerRef.current = window.setTimeout(async () => {
+    const timer = window.setTimeout(async () => {
       try {
-        const res = await client.get('/components', {
-          params: { page: 1, page_size: 10, keyword: query },
-        });
-        setSearchResults(res.data.data || []);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
+        const res = await client.get('/components', { params: { page: 1, page_size: 10, keyword: query }, signal: controller.signal });
+        if (!controller.signal.aborted) setSearchResults(res.data.data || []);
+      } catch { if (!controller.signal.aborted) setSearchResults([]); }
+      finally { if (!controller.signal.aborted) setIsSearching(false); }
     }, 300);
-    return () => {
-      if (searchTimerRef.current) {
-        window.clearTimeout(searchTimerRef.current);
-      }
-    };
+    return () => { window.clearTimeout(timer); controller.abort(); };
   }, [isOpen, searchQuery]);
 
   const failureMap = useMemo(() => {
@@ -166,10 +151,13 @@ export function BatchStockOutModal({
   };
 
   const handleSubmit = async () => {
+    if (submitLock.current) return;
+    if (rows.some(row => !Number.isSafeInteger(row.quantity) || row.quantity < 0 || row.quantity > row.component.stock_quantity)) { toast.error('请填写不超过当前库存的非负整数数量'); return; }
     if (validRows.length === 0) {
       toast.error('请至少填写一行有效出库数量');
       return;
     }
+    submitLock.current = true;
     setIsSubmitting(true);
     setFailures([]);
     try {
@@ -195,6 +183,7 @@ export function BatchStockOutModal({
         toast.error(err.response?.data?.error || '批量出库失败');
       }
     } finally {
+      submitLock.current = false;
       setIsSubmitting(false);
     }
   };
@@ -202,6 +191,7 @@ export function BatchStockOutModal({
   return (
     <Modal
       isOpen={isOpen}
+      busy={isSubmitting}
       onClose={onClose}
       title="批量出库"
       className="max-w-4xl"
@@ -314,7 +304,7 @@ export function BatchStockOutModal({
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap">{supplierName(row.component)}</td>
                       <td className="px-3 py-3 whitespace-nowrap">{supplierPartNumber(row.component)}</td>
-                      <td className="px-3 py-3 whitespace-nowrap">{row.component.stock_quantity}</td>
+                      <td className="px-3 py-3 whitespace-nowrap">{row.component.stock_quantity}<p className="mt-1 text-xs text-muted-foreground">变更后 {row.component.stock_quantity - row.quantity}</p></td>
                       <td className="px-3 py-3">
                         <div className="flex min-w-[160px] items-center gap-2">
                           <Button

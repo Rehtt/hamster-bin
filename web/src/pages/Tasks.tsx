@@ -1,4 +1,10 @@
-import { ParseTraceView } from '../components/ParseTraceView';
+import { Trash2 } from 'lucide-react';
+import { useConfirm } from '../context/confirm';
+import { useListQuery } from '../hooks/useListQuery';
+import { RowActionsMenu } from '../components/ui/RowActionsMenu';
+import { PageState } from '../components/ui/PageState';
+import { Pagination as PaginationControl } from '../components/ui/Pagination';
+import { TaskResultView } from '../components/inventory/TaskResultView';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
@@ -8,17 +14,23 @@ import { taskPending, taskStatusLabel, useTasks } from '../context/tasks';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
-import { SupplierReference } from '../components/SupplierReference';
 import { TaskResponseGuard, lastTaskPage, pruneTaskSelection, taskDeleteConfirmation } from '../utils/taskDeletion';
 import type { TaskDeleteMode, TaskDeleteResult } from '../utils/taskDeletion';
 
 const typeLabel = (task: ParseTask) => `${task.type === 'qrcode_parse' ? '二维码' : task.type === 'image_parse' ? '照片' : '平台编码'}${task.type === 'image_parse' ? ' · AI' : task.input.parse_mode === 'agent' ? ' · Agent 解析' : (task.input.parse_mode ? task.input.parse_mode === 'llm' : task.input.use_llm) ? ' · AI 整理' : ' · 普通解析'}`;
 export default function Tasks() {
+  const confirm = useConfirm();
+  const { params: query, updateQuery, page, pageSize } = useListQuery();
+  const status = query.get('status') || '';
+  const type = query.get('type') || '';
+  const setPage = (value: number) => updateQuery({ page: value });
+  const setStatus = (value: string) => updateQuery({ status: value, page: 1 });
+  const setType = (value: string) => updateQuery({ type: value, page: 1 });
+  const [loading, setLoading] = useState(true);
+  const [menu, setMenu] = useState<string | null>(null);
+
   const [items, setItems] = useState<ParseTask[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
-  const [page, setPage] = useState(1);
-  const [status, setStatus] = useState('');
-  const [type, setType] = useState('');
   const [detail, setDetail] = useState<ParseTask | null>(null);
   const [working, setWorking] = useState<number | null>(null);
   const [params, setParams] = useSearchParams();
@@ -41,16 +53,17 @@ export default function Tasks() {
     const version = guard.current.snapshot();
     const request = ++listRequest.current;
     try {
-      const res = await client.get('/tasks', { params: { page, page_size: 20, status, type } });
+      const res = await client.get('/tasks', { params: { page, page_size: pageSize, status, type } });
       if (!guard.current.accepts(version) || request !== listRequest.current) return;
       const pagination = res.data.pagination as Pagination;
       const lastPage = lastTaskPage(pagination.total, pagination.page_size);
-      if (page > lastPage) { setPage(lastPage); setSelected([]); return; }
+      if (page > lastPage) { updateQuery({ page: lastPage }, true); setSelected([]); return; }
       const items = (res.data.data as ParseTask[]).filter(task => !guard.current.has(task.id));
       setItems(items); setPagination(pagination); setError('');
       setSelected(prev => pruneTaskSelection(prev, items));
     } catch { if (guard.current.accepts(version) && request === listRequest.current) setError('任务列表加载失败'); }
-  }, [page, status, type]);
+    finally { if (request === listRequest.current) setLoading(false); }
+  }, [page, pageSize, status, type, updateQuery]);
   const invalidateList = useCallback(() => { listRequest.current++; }, []);
   useEffect(() => {
     void load();
@@ -81,9 +94,10 @@ export default function Tasks() {
     const timer = window.setInterval(() => void refresh(), 2000);
     return () => { disposed = true; window.clearInterval(timer); };
   }, [detailID, missingDetail]);
+  useEffect(() => { setSelected([]); }, [page, pageSize, status, type]);
   const selectedID = params.get('task');
   useEffect(() => {
-    if (!selectedID) return;
+    if (!selectedID) { detailRequest.current++; setDetail(null); return; }
     let disposed = false;
     const version = guard.current.snapshot();
     const request = ++detailRequest.current;
@@ -96,9 +110,9 @@ export default function Tasks() {
     });
     return () => { disposed = true; };
   }, [selectedID, missingDetail]);
-  const changeScope = () => { guard.current.invalidate(); setSelected([]); setItems([]); };
+  const changeScope = () => { guard.current.invalidate(); setSelected([]); setItems([]); setLoading(true); };
   const remove = async (mode: TaskDeleteMode, ids: number[] = [], single = false) => {
-    if (mutation.current || !confirm(taskDeleteConfirmation(mode, ids, single))) return;
+    if (mutation.current || !await confirm(taskDeleteConfirmation(mode, ids, single))) return;
     mutation.current = true; setDeleting(true); guard.current.invalidate();
     try {
       const res = single ? await client.delete(`/tasks/${ids[0]}`) : await client.post('/tasks/batch-delete', { mode, ...(mode === 'selected' ? { ids } : {}) });
@@ -135,38 +149,24 @@ export default function Tasks() {
   const selectable = items.filter(task => !taskPending(task));
   const busy = deleting || working !== null;
   return <div className="space-y-6">
-    <PageHeader title="任务中心" actions={<Button variant="outline" disabled={busy} onClick={() => void load()}>刷新</Button>} />
+    <PageHeader title="任务中心" actions={<><Button variant="outline" disabled={busy} onClick={() => { setLoading(true); void load(); }}>刷新</Button><RowActionsMenu rowId="cleanup" activeRowId={menu} onActiveRowChange={setMenu} actions={[{ key: 'failed', icon: Trash2, label: '删除失败任务', onClick: () => void remove('failed'), destructive: true, disabled: busy }, { key: 'old', icon: Trash2, label: '删除7天以上任务', onClick: () => void remove('older_than_7_days'), destructive: true, disabled: busy }, { key: 'all', icon: Trash2, label: '删除全部任务', onClick: () => void remove('all'), destructive: true, disabled: busy }]} /></>} />
     <p className="text-sm text-muted-foreground">解析结果仅回填表单，确认保存后才写入元件或预入库。</p>
-    <div className="flex flex-wrap items-center gap-3">
-      <Button variant="destructive" disabled={busy} onClick={() => void remove('failed')}>删除失败任务</Button>
-      <Button variant="destructive" disabled={busy} onClick={() => void remove('all')}>删除全部任务</Button>
-      <Button variant="destructive" disabled={busy} onClick={() => void remove('older_than_7_days')}>删除7天以上任务</Button>
-      <span className="text-sm text-muted-foreground">仅删除已结束任务；快捷操作覆盖全部分页与筛选</span>
-    </div>
-    <div className="flex flex-wrap gap-3">
-      <select disabled={busy} aria-label="任务状态" className="border rounded-md p-2 bg-background" value={status} onChange={e => { changeScope(); setStatus(e.target.value); setPage(1); }}>
+    <div className="surface flex flex-wrap gap-3 p-4">
+      <select disabled={busy} aria-label="任务状态" className="border rounded-md p-2 bg-background" value={status} onChange={e => { changeScope(); setStatus(e.target.value); }}>
         <option value="">全部状态</option>{Object.entries(taskStatusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
       </select>
-      <select disabled={busy} aria-label="任务类型" className="border rounded-md p-2 bg-background" value={type} onChange={e => { changeScope(); setType(e.target.value); setPage(1); }}><option value="">全部类型</option><option value="component_parse">平台编码</option><option value="qrcode_parse">二维码</option><option value="image_parse">照片 AI</option></select>
+      <select disabled={busy} aria-label="任务类型" className="border rounded-md p-2 bg-background" value={type} onChange={e => { changeScope(); setType(e.target.value); }}><option value="">全部类型</option><option value="component_parse">平台编码</option><option value="qrcode_parse">二维码</option><option value="image_parse">照片 AI</option></select>
     </div>
     {selected.length > 0 && <div className="flex items-center gap-3"><span>已选 {selected.length} 项</span><Button variant="destructive" disabled={busy} onClick={() => void remove('selected', selected)}>删除选中</Button><Button variant="outline" disabled={busy} onClick={() => setSelected([])}>取消选择</Button></div>}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
-    <div className="border rounded-lg overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-muted"><tr><th className="p-3"><input type="checkbox" aria-label="本页全选" disabled={busy || !selectable.length} checked={!!selectable.length && selectable.every(task => selected.includes(task.id))} ref={node => { if (node) node.indeterminate = selected.length > 0 && selected.length < selectable.length; }} onChange={e => setSelected(e.target.checked ? selectable.map(task => task.id) : [])} /></th>{['任务', '类型 / 来源', '状态', '创建时间', '操作'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead><tbody>
-      {items.map(task => <tr key={task.id} className="border-t"><td className="p-3"><input type="checkbox" aria-label={`选择任务 #${task.id}`} disabled={busy || taskPending(task)} checked={selected.includes(task.id)} onChange={e => setSelected(prev => e.target.checked ? [...prev, task.id] : prev.filter(id => id !== task.id))} /></td><td className="p-3"><button className="underline" disabled={busy} onClick={() => { detailRequest.current++; setDetail(task); }}>#{task.id} {task.input.code || task.result?.component?.platform_code || (task.type === 'image_parse' ? '照片' : '二维码')}</button></td><td className="p-3">{typeLabel(task)}<br />{task.source === 'pre-stocks' ? '预入库' : '元件管理'}{task.record_id ? ` #${task.record_id}` : ' · 新增'}</td><td className="p-3">{taskStatusLabel[task.status]}</td><td className="p-3 whitespace-nowrap">{new Date(task.created_at).toLocaleString()}</td><td className="p-3">{actions(task)}</td></tr>)}
+    {(loading || error || !items.length) && <div className="surface"><PageState loading={loading} error={error} empty={!items.length} filtered={!!status || !!type} onRetry={() => void load()} onClear={() => updateQuery({ status: '', type: '', page: 1 })} /></div>}
+    <div className={`surface hidden overflow-x-auto ${loading || error || !items.length ? '' : 'md:block'}`}><table className="w-full text-sm text-left"><thead className="bg-muted"><tr><th className="p-3"><input type="checkbox" aria-label="本页全选" disabled={busy || !selectable.length} checked={!!selectable.length && selectable.every(task => selected.includes(task.id))} ref={node => { if (node) node.indeterminate = selected.length > 0 && selected.length < selectable.length; }} onChange={e => setSelected(e.target.checked ? selectable.map(task => task.id) : [])} /></th>{['任务', '类型 / 来源', '状态', '创建时间', '操作'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead><tbody>
+      {items.map(task => <tr key={task.id} className="border-t"><td className="p-3"><input type="checkbox" aria-label={`选择任务 #${task.id}`} disabled={busy || taskPending(task)} checked={selected.includes(task.id)} onChange={e => setSelected(prev => e.target.checked ? [...prev, task.id] : prev.filter(id => id !== task.id))} /></td><td className="p-3"><button className="underline" disabled={busy} onClick={() => { detailRequest.current++; setDetail(task); updateQuery({ task: task.id }); }}>#{task.id} {task.input.code || task.result?.component?.platform_code || (task.type === 'image_parse' ? '照片' : '二维码')}</button></td><td className="p-3">{typeLabel(task)}<br />{task.source === 'pre-stocks' ? '预入库' : '元件管理'}{task.record_id ? ` #${task.record_id}` : ' · 新增'}</td><td className="p-3"><span className="status-badge">{taskStatusLabel[task.status]}</span></td><td className="p-3 whitespace-nowrap">{new Date(task.created_at).toLocaleString()}</td><td className="p-3">{actions(task)}</td></tr>)}
       {!items.length && <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">暂无任务</td></tr>}
     </tbody></table></div>
-    <div className="flex flex-wrap items-center gap-3"><span>共 {pagination.total} 个任务</span><Button variant="outline" disabled={busy || page <= 1} onClick={() => { changeScope(); setPage(page - 1); }}>上一页</Button><span>{page} / {Math.max(1, pagination.total_page || 0)}</span><Button variant="outline" disabled={busy || page >= (pagination.total_page || 0)} onClick={() => { changeScope(); setPage(page + 1); }}>下一页</Button></div>
-    <Modal isOpen={!!detail} onClose={closeDetail} title={`任务 #${detail?.id || ''}`} className="max-w-2xl" footer={detail && actions(detail)}>
-      {detail && <div className="space-y-4 max-h-[65vh] overflow-auto py-4">
-        <p>{typeLabel(detail)} · {taskStatusLabel[detail.status]}</p>
-        {detail.retry_of_id && <p>重试来源：#{detail.retry_of_id}</p>}
-        <p className="text-sm text-muted-foreground">开始：{detail.started_at ? new Date(detail.started_at).toLocaleString() : '—'}<br />结束：{detail.finished_at ? new Date(detail.finished_at).toLocaleString() : '—'}</p>
-        <p className="font-medium">输入</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.input, null, 2)}</pre>
-        {detail.type === 'image_parse' && <img src={`/api/v1/tasks/${detail.id}/image`} alt="照片解析原图" className="max-h-64 max-w-full rounded border object-contain" />}
-        {detail.error && <p role="alert" className="text-destructive">{detail.error}（{detail.error_code}）</p>}
-        <ParseTraceView trace={detail.result?.parse_trace} />
-        {detail.result && <><SupplierReference component={detail.result.component} /><p className="font-medium">解析结果</p><pre className="whitespace-pre-wrap break-all text-xs bg-muted p-3 rounded">{JSON.stringify(detail.result, null, 2)}</pre></>}
-      </div>}
+    {!loading && !error && <div className="space-y-3 md:hidden">{items.map(task => <article key={task.id} className="surface space-y-4 p-4"><div className="flex items-start gap-3"><input type="checkbox" aria-label={`选择任务 #${task.id}`} checked={selected.includes(task.id)} disabled={busy || taskPending(task)} onChange={e => setSelected(prev => e.target.checked ? [...prev, task.id] : prev.filter(id => id !== task.id))} className="mt-1 size-4" /><div className="min-w-0 flex-1"><button className="break-all text-left font-medium text-primary" onClick={() => { detailRequest.current++; setDetail(task); updateQuery({ task: task.id }); }}>#{task.id} {task.input.code || task.result?.component?.name || (task.type === 'image_parse' ? '照片解析' : '二维码解析')}</button><p className="mt-2 text-xs text-muted-foreground">{typeLabel(task)}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(task.created_at).toLocaleString('zh-CN')}</p></div><span className="status-badge shrink-0">{taskStatusLabel[task.status]}</span></div>{actions(task)}</article>)}</div>}
+    <PaginationControl pagination={{ ...pagination, page, page_size: pageSize }} onPageChange={next => { changeScope(); setPage(next); }} onPageSizeChange={page_size => { changeScope(); updateQuery({ page_size, page: 1 }); }} disabled={busy || loading} />
+    <Modal isOpen={!!detail} onClose={closeDetail} title={`任务 #${detail?.id || ''}`} variant="drawer" footer={detail && actions(detail)}>
+      {detail && <TaskResultView task={detail} />}
     </Modal>
   </div>;
 }

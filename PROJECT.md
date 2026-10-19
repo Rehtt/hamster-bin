@@ -12,13 +12,12 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 .
 ├── README.md                  # 项目介绍、快速开始、配置和部署说明
 ├── LICENSE                    # MIT 许可证
-├── Dockerfile                 # 多阶段 Docker 镜像构建（前端 + Go 静态编译 + distroless 运行时）
+├── Dockerfile                 # 多阶段 Docker 镜像构建（Node.js 24/pnpm + Go 静态编译 + Alpine 运行时）
 ├── docker-compose.yml         # Docker Compose 部署（默认本地 build + SQLite 卷）
 ├── .env.example               # Compose 环境变量模板（复制为 .env 后使用）
 ├── .dockerignore              # Docker build context 排除规则
 ├── Makefile                   # 后端运行、构建、跨平台构建和前端构建入口
 ├── go.mod / go.sum            # Go 模块定义和依赖锁定
-├── package-lock.json          # 根目录 npm lock 文件；当前主要前端依赖在 web/ 内
 ├── embed.go                   # 将 web/dist 嵌入 Go 二进制
 ├── cmd/
 │   └── server/
@@ -40,13 +39,14 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 │   └── version/               # 项目版本变量，默认 v1.0.0，release 构建时通过 ldflags 注入 git tag
 ├── web/
 │   ├── package.json           # 前端脚本和依赖
-│   ├── package-lock.json      # 前端 npm 依赖锁定
+│   ├── pnpm-lock.yaml         # 唯一前端依赖锁文件（pnpm 11.3.0）
+│   ├── pnpm-workspace.yaml    # 安装脚本白名单与运行前依赖校验
 │   ├── vite.config.ts         # Vite 配置；生产构建通过 manualChunks 拆分 react、lucide、html5-qrcode 等 vendor
-│   ├── tailwind.config.js     # Tailwind CSS 配置
-│   ├── postcss.config.js      # PostCSS 配置
 │   ├── eslint.config.js       # 前端 ESLint 配置
 │   ├── tsconfig*.json         # TypeScript 配置
-│   ├── index.html             # Vite HTML 入口
+│   ├── playwright.config.ts   # Chromium 浏览器回归配置
+│   ├── e2e/                   # 模拟 API、关键流程与响应式浏览器测试
+│   ├── index.html             # 中文入口、浏览器标题及首屏主题应用
 │   ├── scripts/test-auth.mjs   # 复用 Vite SSR 加载器的登录入口/路由保护渲染测试
 │   ├── public/
 │   │   └── logo.svg           # 静态 logo
@@ -63,6 +63,14 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 └── web_legacy/
     └── index.html             # 旧版前端页面，保留作历史/兼容参考
 ```
+
+## 前端工具链与组件约束
+
+- 使用 Node.js 24（根目录 `.node-version`）、pnpm 11.3.0（`web/package.json#packageManager`）。仅保留 `web/pnpm-lock.yaml`，不得重新引入 npm 锁文件。`pnpm-workspace.yaml` 允许 esbuild 构建脚本，运行前依赖校验使用 error，不隐式变更依赖。修改依赖后先安装；CI、Docker 用 `pnpm install --frozen-lockfile`。
+- `InventoryFields` 使用独立 `InventoryFieldsValue` 视图模型；两类库存页面各自转换原接口 payload，不混用数量字段。基本资料/库存默认展开，采购/补充资料默认折叠，错误定位字段；保存中禁用并防重入。`useFormGuard` 比较显式快照，关闭脏表单需确认，刷新通过 beforeunload 保护。后台解析不阻塞关闭。
+- `SmartEntry` 复用原任务解析流程；`ComponentDetail` 调用现有元件详情/流水接口；`StockLogList` 复用于仪表盘、详情和流水页；`TaskResultView` 优先显示可读字段/照片结果，JSON 和诊断折叠。
+- `useListQuery` 更新 URL 时保留任务参数；`useResource` 以 URL/刷新版本绑定结果并取消旧请求。保留全部页面路径、API 前缀/Cookie/401 规则、总价分/单价微元单位，无后端接口或迁移变化。
+- `make install-frontend` 安装依赖，`make test-frontend` 执行 lint/typecheck/登录/解析测试；`make build-frontend` 输出 `web/dist`。`web/playwright.config.ts` 与 `e2e/` 使用模拟接口验证关键流程、三个屏宽和两种主题，运行 `pnpm exec playwright install chromium` → `pnpm test:e2e`。可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指定系统 Chromium。CI 执行冻结安装、前端检查/构建/浏览器测试、Go 测试及临时目录二进制构建。
 
 ## 后端结构
 
@@ -91,12 +99,13 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 
 - `web/src/App.tsx` 定义 SPA 页面路由：`/`、`/components`、`/pre-stocks`、`/categories`、`/logs`、`/tasks`、`/login`。业务页面包裹 `ProtectedRoute` 与 `Layout`；登录页不使用侧边栏。各页面通过 `React.lazy` 按路由懒加载，路由切换时显示 Suspense 加载占位。
 - `web/src/context/AuthContext.tsx` 提供 `AuthProvider`，启动时先调用 `GET /auth/config`，鉴权开启再调用 `GET /auth/me`，并维护 `login`、`logout` 和鉴权状态；`context/auth.ts` 定义共享 Context 与类型，`context/useAuth.ts` 提供读取鉴权状态的 hook。为满足 React Fast Refresh 规则，组件文件不导出非组件 hook。认证加载失败通过 `components/AuthError.tsx` 显示错误/重试，不能按免登录处理；登录页按配置展示密码和统一登录入口，OAuth 使用浏览器导航到后端，失败提示后移除错误查询参数。
+- `web/src/api/inventory.ts` 定义独立元件草稿/提交类型、显式资料字段映射及保存/库存/价格/CSV 请求；CSV 复用 Axios 的 Cookie 和 401 行为。旧元件 PUT 使用全量 Save，编辑提交必须由原记录携带 `created_at`，避免清空创建时间；该元数据不作为可编辑字段。
 - `web/src/api/client.ts` 是统一 Axios 客户端，API 前缀固定为 `/api/v1`，`withCredentials: true` 以携带 HttpOnly Cookie；401 时跳转 `/login`（`/auth/config`、`/auth/me` 与 `/auth/login` 除外）。
-- `web/src/pages/` 存放业务页面：仪表盘、元件管理、预入库、分类管理、库存日志。供应商当前不设独立页面，在元件/预入库表单内输入/选择并自动创建。库存日志页支持显示总数和切换每页条数。仪表盘（`Dashboard.tsx`）通过 `GET /stats` 展示元件/分类/库存概览、库存总价值，以及按时间范围（本月/本季/全部）筛选的累计入库金额、入库数量、出库数量。
-- `web/src/pages/Components.tsx` 是元件管理主页面，负责元件列表、分字段搜索（编号、名称、厂家型号、制造商、参数、供应商、料号）、分类筛选（可输入下拉）、元件编号录入/展示、厂家型号录入/展示、一键为未编号元件自动补号、供应商输入/自动创建、供应商料号录入、封装/位置/供应商历史下拉选项、平台编码导入、解析结果分类填充、普通解析 / AI 整理 / Agent 解析三选一（默认普通，料号与扫码共用）、二维码录入、图片上传、拍摄和图片 URL 查看/编辑、补录价格（`POST /components/:id/backfill-price`）和库存变更入口。移动端（`< md`）搜索筛选区默认折叠，由 `CollapsibleFilterPanel` 提供折叠头、条件数量 badge 与快捷搜索；搜索成功后自动收起以展示列表。列表中系统编号、厂家型号、供应商料号支持点击复制到剪贴板；列表操作列使用 `RowActionsMenu` 行级悬浮菜单（⋮ 始终可见，操作列 sticky 右固定，横向滚动时不丢失；点击在触发按钮左侧单行横向展开编辑/库存/补录价格/记录/复制/删除，激活行内容 blur，点外部或 Esc 关闭），其中「复制」可将元件资料以新增表单提交副本，副本清空元件编号、库存和参考单价，由后端自动生成新编号。搜索区中制造商、供应商、分类为可输入下拉，选项分别来自 `GET /components/options` 的 `manufacturers`、`GET /suppliers` 和 `GET /categories`，输入时动态过滤匹配。新增元件时可输入采购总价（元），前端换算为分提交并按库存数量展示分摊单价（微元格式化）；库存数量、补录价格采购数量和库存变更数量支持 5、10、20、50、100 快捷选择；入库弹窗同样支持总价录入，出库时展示参考单价与预估成本。列表支持显示总数、切换每页条数、选择排序字段与方向（`localStorage` 键 `hamster-components-sort` 持久化；清空筛选不重置排序）、多选元件并批量修改存放位置（批量位置弹窗同样支持历史位置下拉），以及批量出库（页面顶部按钮或勾选栏入口；`BatchStockOutModal` 支持搜索添加/删除行、逐行填写出库数量与统一备注，调用 `POST /components/batch-stock-out` 一键提交）。列表支持「列设置」：勾选显示列、自定义表头名称与列顺序（`localStorage` 键 `hamster-components-table-columns`，与导出列配置、排序配置独立；勾选框、图片、操作列固定）。支持按当前筛选条件导出 CSV，导出前可在弹窗中勾选列、自定义表头名称与列顺序（`localStorage` 键 `hamster-components-export-columns`）。
-- `web/src/pages/PreStocks.tsx` 是预入库页面，负责待入库记录列表、状态筛选、分页、新建/编辑预入库、平台编码解析、二维码解析、分类/供应商输入并自动创建、采购总价分摊预览、图片缩略图/预览、确认入库和删除待入库记录。待入库行操作列同样使用 `RowActionsMenu`（sticky 右列、⋮ 常显、操作单行横向展开：编辑/确认入库/删除）；已入库行显示关联元件 ID 文字。移动端状态筛选区同样使用 `CollapsibleFilterPanel` 折叠，折叠头展示当前状态摘要。预计数量支持加减步进与 5、10、20、50、100 快捷选择。预入库保存时自动生成 `HB-xxxxxx` 编号但不进入正式库存；确认入库后转为正式元件并写库存流水。
-- `web/src/components/Layout.tsx` 提供页面布局，桌面端侧边栏 fixed 定位于视口（主内容区通过 `margin-left` 避让），支持收起为图标栏（`localStorage` 键 `hamster-sidebar-collapsed` 持久化）；鉴权启用且已登录时显示退出登录按钮。`BatchStockOutModal.tsx` 提供批量出库弹窗（搜索添加元件、行列表展示供应商与供应商料号、逐行数量与成本预览、失败行高亮）。`QRScanner.tsx`、`CameraCapture.tsx` 和 `PhotoParseModal.tsx` 处理扫码、普通拍照与拍照 AI 解析；照片解析弹窗支持核对结果、数量校验，新增可多选，编辑使用单选。
-- `web/src/components/ui/` 存放基础 UI 组件。`PageHeader` 统一页面标题与操作按钮区（移动端 `flex-wrap` 换行）；`CollapsibleFilterPanel` 在 `< md` 时默认折叠筛选内容，桌面端始终展开，可通过 ref 调用 `collapse()` 收起；`RowActionsMenu` 提供表格行级悬浮操作菜单（⋮ 始终可见、sticky 右列；展开后 icon 按钮单行横向排列，外部点击/Esc 关闭）。新增通用控件时优先复用这里的组件风格。
+- `web/src/pages/` 存放业务页面：仪表盘、元件管理、预入库、分类管理、库存日志。供应商当前不设独立页面，在元件/预入库表单内输入/选择并自动创建。库存日志页支持显示总数和切换每页条数。仪表盘（`Dashboard.tsx`）区分全部库存概况与期间统计，并复用库存记录接口展示近期流水及快捷入口；通过 `GET /stats` 展示元件/分类/库存概览、库存总价值，以及按时间范围（本月/本季/全部）筛选的累计入库金额、入库数量、出库数量。
+- `web/src/pages/Components.tsx` 负责元件查询、CRUD、复制、自动补号、批量位置/出库、价格补录和流水撤销。关键词/分类/高级分字段条件、分页和排序写入 URL，条件支持逐项移除；桌面表格/手机卡片，名称打开详情抽屉，行菜单显示文字。保留点击复制编号/型号/料号、显示列和 CSV 自定义表头/顺序/拖拽。`components/inventory/columns.ts` 管理原偏好结构，`ColumnSettings.tsx` 管理配置 UI；`hamster-components-sort`、`hamster-components-table-columns`、`hamster-components-export-columns` 均保持兼容。采购总价仍按元录入、分提交、微元单价预览。数量快捷值保留 5/10/20/50/100。单次出入库展示当前/变更后数量、单价/金额，提交防重入并拒绝无效数量。
+- `web/src/pages/PreStocks.tsx` 负责预入库 CRUD、确认入库和解析录入；pending/confirmed/all 通过状态标签切换，分页与筛选保留在 URL；桌面表格、手机卡片。共用 `InventoryFields` 与 `SmartEntry`，保留分类/供应商自动创建、采购分摊和照片多结果核对。保存生成 HB 编号但不增加正式库存；确认后按原接口生成元件和流水。
+- `web/src/components/Layout.tsx` 提供桌面可收起侧栏（保留 `hamster-sidebar-collapsed`）、顶栏/任务状态、手机 Radix 导航抽屉。`ThemeProvider` 默认浅色，`hamster-theme` 保存 light/dark/system，监听系统变化；`index.html` 首屏应用主题。`src/index.css` 用 Tailwind 4 CSS 变量定义浅/深主题；无 Tailwind JS 或 PostCSS 配置。浏览器基线 Safari 16.4+、Chrome 111+、Firefox 128+。扫码与相机继续懒加载，拒绝权限显示重试/上传入口，扫码自动启动只尝试一次，卸载释放资源。
+- `web/src/components/ui/` 统一按钮、表单、分页和完整状态。`Modal` 使用 Radix Dialog，可切换居中弹窗/右侧宽抽屉，手机抽屉全屏、底栏固定；`ConfirmProvider` 用 AlertDialog 处理危险操作和放弃修改；菜单用 Radix DropdownMenu，带文字、键盘导航、Esc 与焦点恢复。`SearchSelect` 使用 Popover + cmdk，值/名称分离并支持创建名称。`PageState` 区分加载、空数据、无匹配和失败重试，`SafeImage` 显示失败占位。
 - `web/src/types/index.ts` 存放前端共享类型。后端模型字段变化时，应同步检查这里和调用 API 的页面。
 - `components/ParseModeSelect.tsx` 提供两表单共用的模式选择；`components/ParseTraceView.tsx` 展示任务调用诊断。`components/SupplierReference.tsx` 供元件/预入库表单和任务详情共用，展示来源名称、实际查询地址、供应商料号、库存、币种、阶梯原始单价及原查询时间，未知值明确标记。`utils/parseResult.ts` 显式挑选业务资料字段，参考快照独立于表单和金额计算；新查询、表单关闭/保存/切换会话清除参考信息，当前料号或查询输入不匹配时隐藏，任务结果继续遵循会话隔离和手动字段修改保护。历史任务应用结果保留原查询时间。
 - `web/src/utils/price.ts` 与后端 `internal/price` 对应：总价用分（`yuanToCents`、`formatCents`），单价用微元（`formatMicro`、`calcUnitPriceMicro`、`calcOutboundCostCents`）。修改金额规则时需同步前后端两处。
@@ -134,15 +143,15 @@ go run cmd/server/main.go
 
 ```bash
 cd web
-npm run dev
+pnpm run dev
 ```
 
 前端构建：
 
 ```bash
 cd web
-npm run build
-npm run test:auth   # 登录方式、认证错误和路由保护的 SSR 渲染测试
+pnpm run build
+pnpm run test:auth   # 登录方式、认证错误和路由保护的 SSR 渲染测试
 ```
 
 后端构建：
@@ -174,14 +183,14 @@ make build BUILD_DIR="$build_dir"
 
 ```bash
 cd web
-npm run build
+pnpm run build
 cd ..
 make build
 ```
 
 前端构建产物必须位于 `web/dist`，因为 `embed.go` 和 `internal/router/router.go` 依赖该路径提供嵌入式静态资源。
 
-Docker 镜像通过根目录 `Dockerfile` 多阶段构建：`node:20-alpine` 构建 `web/dist`，`golang:1.25-alpine` 以 `CGO_ENABLED=0` 编译并注入 `VERSION`，运行时镜像为 `gcr.io/distroless/static-debian12:nonroot`。容器默认监听 `8080`，数据目录 `/app/data`（`DB_DRIVER=sqlite`、`DB_PATH=/app/data/inventory.db`，`IMAGE_DIR=/app/data/images`），需挂载 volume 持久化 SQLite 与图片；连接外部 MySQL/PostgreSQL 时通过 `DB_DRIVER` 与 `DB_DSN` 覆盖。
+Docker 镜像通过根目录 `Dockerfile` 多阶段构建：`node:24-alpine` 使用 pnpm 11.3.0 冻结安装并构建 `web/dist`，`golang:1.25-alpine3.23` 以 `CGO_ENABLED=0` 编译并注入 `VERSION`，运行时镜像为 `alpine:3.23`。容器默认监听 `8080`，数据目录 `/app/data`（`DB_DRIVER=sqlite`、`DB_PATH=/app/data/inventory.db`，`IMAGE_DIR=/app/data/images`），需挂载 volume 持久化 SQLite 与图片；连接外部 MySQL/PostgreSQL 时通过 `DB_DRIVER` 与 `DB_DSN` 覆盖。
 
 Docker Compose 部署（`docker-compose.yml`）：
 
@@ -194,7 +203,7 @@ docker compose down
 
 默认从源码 `build` 镜像；切换 GHCR 预构建镜像时注释 `build` 段并启用 `image: ghcr.io/rehtt/hamster-bin:latest`。全部运行时环境变量见 `.env.example`，通过复制为 `.env` 后由 compose 注入容器。
 
-发布构建由 GitHub Actions 在推送 `v*` git tag 时触发，例如 `v1.0.0`。`build-and-release` job 使用 `npm ci` 安装前端依赖，先构建 `web/dist`，再运行 `go test . ./cmd/... ./internal/...`，最后执行 `make build-all VERSION=${GITHUB_REF_NAME}` 并以同名 tag 创建 GitHub Release。并行的 `docker` job 使用 buildx 构建 `linux/amd64` 与 `linux/arm64` 镜像，推送到 `ghcr.io/rehtt/hamster-bin`，tag 为 git tag 与 `latest`。
+发布构建由 GitHub Actions 在推送 `v*` git tag 时触发，例如 `v1.0.0`。`build-and-release` job 使用 `pnpm install --frozen-lockfile` 安装前端依赖，先构建 `web/dist`，再运行 `go test . ./cmd/... ./internal/...`，最后执行 `make build-all VERSION=${GITHUB_REF_NAME}` 并以同名 tag 创建 GitHub Release。并行的 `docker` job 使用 buildx 构建 `linux/amd64` 与 `linux/arm64` 镜像，推送到 `ghcr.io/rehtt/hamster-bin`，tag 为 git tag 与 `latest`。
 
 ## API 与配置约束
 
@@ -278,7 +287,7 @@ docker compose down
 - 退出令牌复用 go-oidc `VerifyLogout`，每次通知从可信发现文档的 `jwks_uri` 取公钥，匹配非空 kid，限定 RS256 和 `typ=logout+jwt`；不使用令牌内的公钥地址。检查 iss/aud、非空 sub/sid/jti、数值 iat/exp；iat 最多未来 1 分钟/过去 3 分钟，exp 尚有效且晚于 iat；退出事件必须为 JSON 对象，禁止任何值的 nonce。
 - `oauth_logouts` 按 `target_key` 持久化结束状态，保留 31 天，启动、登录和退出写入时清理过期记录；结束记录与目标下全部本地会话的删除在同一事务提交。登录最终落库与通知事务使用同一目标锁串行执行，拒绝已结束目标的迟到回调；幂等以目标为单位，不依赖每次重试可能变化的 jti。不会退化为按账号关闭其他设备。
 - 后端通知只删除本地会话和令牌，不额外撤销离线授权；页面下次业务请求 401 后由现有客户端跳转登录，不增加轮询。应用内退出仍先清除本地记录和 Cookie，再尽力撤销最新刷新令牌；切换登录方式也清理原 OAuth 会话。密码与 MCP 不参与同步退出或 OAuth 在线检查。本次不实现应用主动退出统一登录；当前仅支持单实例，多实例需重新设计分布式锁及短期流程存储。
-- 测试：`internal/auth/oauth_test.go` 与 `oauth_logout_test.go` 使用本地 OIDC/JWKS 和临时 SQLite，覆盖校验失败、撤权、轮换、通知幂等/目标隔离、并发、事务回滚、重启和加密；`internal/database/oauth_test.go` 覆盖旧表升级失效；`internal/router/auth_test.go` 覆盖完整 HTTP 登录/退出通知、Cookie、状态码、兼容和日志过滤。新增认证代码先执行 `go fix ./...`、`go fmt ./...`，再执行全量测试及 `go test -race ./internal/auth ./internal/database ./internal/handlers ./internal/middleware ./internal/repository ./internal/router`；前端在 `web/` 执行 `npm run lint`、`npm run test:auth` 和 `npm run build`，最后 `make build`。
+- 测试：`internal/auth/oauth_test.go` 与 `oauth_logout_test.go` 使用本地 OIDC/JWKS 和临时 SQLite，覆盖校验失败、撤权、轮换、通知幂等/目标隔离、并发、事务回滚、重启和加密；`internal/database/oauth_test.go` 覆盖旧表升级失效；`internal/router/auth_test.go` 覆盖完整 HTTP 登录/退出通知、Cookie、状态码、兼容和日志过滤。新增认证代码先执行 `go fix ./...`、`go fmt ./...`，再执行全量测试及 `go test -race ./internal/auth ./internal/database ./internal/handlers ./internal/middleware ./internal/repository ./internal/router`；前端在 `web/` 执行 `pnpm run lint`、`pnpm run test:auth` 和 `pnpm run build`，最后 `make build`。
 
 ## 修改约束
 
@@ -307,9 +316,9 @@ docker compose down
 - `POST /api/v1/components/batch` 与 `POST /api/v1/pre-stocks/batch` 接收 `{ "items": [...] }`，最多 100 条；每条需要名称、分类和显式填写的非负整数数量（元件 `stock_quantity`、预入库 `expected_quantity`）；缺失、`null`、负数或小数返回 400，明确填写的 0 合法。分类/供应商可按名称自动匹配或创建。成功返回 `201 {data:[...]}`，顺序与请求条目一致。整个批量操作使用单事务，任一条失败连同分类、供应商和库存流水全部回滚；元件入库价格和库存流水遵循普通创建规则，无数据库迁移。
 - 旧 `/components/parse` 和 `/components/parse-qrcode` 继续同步返回原有结构，复用相同解析器并传递 HTTP 请求上下文。
 - `web/src/context/TaskContext.tsx` 在受保护布局内维护共享任务状态，每 2 秒轮询跟踪中的任务。会话存储 `hamster-pending-tasks` 保存未完成 ID；刷新时分页恢复数据库排队/运行任务，并查询原跟踪 ID，历史完成任务不重复通知。退出登录卸载 Provider，终止轮询。
-- `/tasks`（`pages/Tasks.tsx`）是任务中心，提供分页、状态/类型筛选、输入/结果/错误/调用记录详情、取消、重试、应用结果和删除。列表/详情可单条删除；列表支持本页全选、勾选删除以及删除失败任务、全部任务、7 天以上任务三个全库快捷操作（不受分页/筛选影响）。仅终态任务可勾选，翻页/筛选清空选择，轮询保留当前页有效选择；所有删除使用确认框，操作期间禁止重复提交及冲突操作，成功后按实际删除 ID 清理共享缓存/会话跟踪、刷新总数并回退越界页，删除当前详情后关闭弹窗并移除 task 查询参数，详情 404 同样关闭提示。请求失败保留有效勾选。`utils/taskDeletion.ts` 集中选择裁剪、页码计算、确认文本与响应版本/删除标记，阻止旧轮询恢复已删除任务。元件和预入库表单的“拍照 AI”统一采用“核对结果 → 复用业务表单逐条编辑 → 一次批量保存”。核对时新增可多选，编辑已有记录使用单选并可直接切换任意结果；未知数量必须手动补齐，显式 0 会保留。侧边栏有入口。SPA fallback 直接返回嵌入的 `web/dist/index.html`，刷新任务/恢复链接不会丢失路径和查询参数；构建产物不提交。
+- `/tasks`（`pages/Tasks.tsx`）是任务中心，提供 URL 分页、状态/类型筛选、可读结果/错误详情及折叠 JSON/调用诊断，清理操作收进菜单；保留输入详情、取消、重试、应用结果和删除。列表/详情可单条删除；列表支持本页全选、勾选删除以及删除失败任务、全部任务、7 天以上任务三个全库快捷操作（不受分页/筛选影响）。仅终态任务可勾选，翻页/筛选清空选择，轮询保留当前页有效选择；所有删除使用确认框，操作期间禁止重复提交及冲突操作，成功后按实际删除 ID 清理共享缓存/会话跟踪、刷新总数并回退越界页，删除当前详情后关闭弹窗并移除 task 查询参数，详情 404 同样关闭提示。请求失败保留有效勾选。`utils/taskDeletion.ts` 集中选择裁剪、页码计算、确认文本与响应版本/删除标记，阻止旧轮询恢复已删除任务。元件和预入库表单的“拍照 AI”统一采用“核对结果 → 复用业务表单逐条编辑 → 一次批量保存”。核对时新增可多选，编辑已有记录使用单选并可直接切换任意结果；未知数量必须手动补齐，显式 0 会保留。侧边栏有入口。SPA fallback 直接返回嵌入的 `web/dist/index.html`，刷新任务/恢复链接不会丢失路径和查询参数；构建产物不提交。
 - `hooks/usePhotoDrafts.ts` 保存独立的完整表单草稿，`components/PhotoDraftNavigation.tsx` 提供条目切换与进度提示；切换和提交前合并当前编辑值，包含分类、供应商、数量、价格、位置、编号和图片。校验失败定位条目，请求失败保留全部草稿并恢复保存状态；元件创建成功后按响应顺序上传各条图片，图片失败提示对应条目但不撤销已保存元件。预入库图片沿用 URL 字段。`utils/photoResult.ts` 显式转换照片字段，正确映射供应商料号；`types/index.ts` 区分原始 `ParsedImageItem`（数量可为 `null`）与已核对 `ReviewedImageItem`（数量为整数），`TaskResult.component` 为可选。
 - `components/PhotoParseModal.tsx` 每次打开/切换目标创建独立会话；提交/解析期间可关闭，确认或关闭会卸载弹窗并释放摄像头，重新打开默认显示拍摄/选图入口。共享任务上下文继续跟踪后台任务，会话标识阻止迟到响应或旧任务回填新弹窗。
 - `hooks/useParseTask.ts` 隔离表单会话，`utils/parseResult.ts` 按提交快照逐字段合并非空解析值；手动修改保留。关闭、保存、重新打开、复制表单或切换照片草稿使旧编码/二维码任务失去自动回填资格，任务仍继续。`components/ParseTaskStatus.tsx` 显示任务编号和状态，解析不阻塞编辑/关闭/保存，仅禁用同一会话内重复提交。
 - `hooks/useTaskApplication.ts` 消费业务页 `?applyTask=<id>` 恢复链接；先取任务，再重新读取编辑记录；照片任务先进入同一核对弹窗，确认后才填入业务表单。目标删除或预入库已确认时询问是否用于新增表单。只恢复解析结果，不恢复完整未保存草稿，业务保存需用户确认。
-- 测试：修改 Go 后按顺序执行 `go fix ./...` → `go fmt ./...` → `go test . ./cmd/... ./internal/...`；删除功能需执行 `go test -race ./internal/tasks ./internal/repository`；`task_delete_test.go` / `tasks/delete_test.go` 覆盖删除模式、七天边界、跨批次事务回滚、共享照片/最后引用、清理失败、重试并发及迟到结果，`handlers/task_handler_test.go` 覆盖输入/状态码和鉴权。`internal/handlers/batch_handler_test.go` 覆盖数量边界、完整字段/价格、跨表编号和事务回滚；任务测试使用本地解析器/临时数据库，LCSC 测试使用本地 HTTP 与模型响应覆盖 API 映射、报价精度、回退、AI 及取消/超时，handler/task 测试覆盖报价传递和持久化，无需访问真实商品页。前端在 `web/` 执行 `npm run lint`、`npm run test:parser`（`scripts/test-parser.mjs`，Vite SSR + Node，验证参考展示、字段隔离、手动修改保护及删除的选择/响应失效/空页回退逻辑）、`npm run build`，并执行 `npm run test:auth`，然后根目录 `make build BUILD_DIR=<临时输出目录>` 验证静态资源嵌入后的二进制，保护已有本地二进制。
+- 测试：修改 Go 后按顺序执行 `go fix ./...` → `go fmt ./...` → `go test . ./cmd/... ./internal/...`；删除功能需执行 `go test -race ./internal/tasks ./internal/repository`；`task_delete_test.go` / `tasks/delete_test.go` 覆盖删除模式、七天边界、跨批次事务回滚、共享照片/最后引用、清理失败、重试并发及迟到结果，`handlers/task_handler_test.go` 覆盖输入/状态码和鉴权。`internal/handlers/batch_handler_test.go` 覆盖数量边界、完整字段/价格、跨表编号和事务回滚；任务测试使用本地解析器/临时数据库，LCSC 测试使用本地 HTTP 与模型响应覆盖 API 映射、报价精度、回退、AI 及取消/超时，handler/task 测试覆盖报价传递和持久化，无需访问真实商品页。前端在 `web/` 执行 `pnpm run lint`、`pnpm run test:parser`（`scripts/test-parser.mjs`，Vite SSR + Node，验证参考展示、字段隔离、手动修改保护及删除的选择/响应失效/空页回退逻辑）、`pnpm run build`，并执行 `pnpm run test:auth`，然后根目录 `make build BUILD_DIR=<临时输出目录>` 验证静态资源嵌入后的二进制，保护已有本地二进制。

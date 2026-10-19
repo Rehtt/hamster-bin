@@ -1,24 +1,27 @@
-import { ParseModeSelect } from '../components/ParseModeSelect';
+import { inventoryApi } from '../api/inventory';
+import { useConfirm } from '../context/confirm';
+import { useListQuery } from '../hooks/useListQuery';
+import { useResource } from '../hooks/useResource';
+import { useFormGuard } from '../hooks/useFormGuard';
+import { InventoryFields } from '../components/inventory/InventoryFields';
+import { SmartEntry } from '../components/inventory/SmartEntry';
+import { PageState } from '../components/ui/PageState';
+import { SafeImage } from '../components/ui/SafeImage';
+import { Pagination as PaginationControl } from '../components/ui/Pagination';
 import type { ParseMode } from '../types';
 import { useParseTask } from '../hooks/useParseTask';
 import { useTaskApplication } from '../hooks/useTaskApplication';
-import { ParseTaskStatus } from '../components/ParseTaskStatus';
 import { mergeParsed, parsedComponentFields, matchingSupplierReference } from '../utils/parseResult';
-import { SupplierReference } from '../components/SupplierReference';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CheckCircle2, Edit, Hash, Loader2, Minus, Plus, QrCode, Search, Trash2 } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { CheckCircle2, Edit, Loader2, Plus, QrCode, Search, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
 import { type Category, type ComponentOptions, type Pagination, type PreStock, type PreStockStatus, type Supplier, type ParsedComponentInfo, type ReviewedImageItem, type ParseTask } from '../types';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
-import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
-import { CollapsibleFilterPanel } from '../components/ui/CollapsibleFilterPanel';
-import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 import { RowActionsMenu } from '../components/ui/RowActionsMenu';
-import { calcUnitPriceMicro, formatCents, formatMicro, yuanToCents } from '../utils/price';
+import { formatCents, yuanToCents } from '../utils/price';
 import { copyToClipboard } from '../utils/clipboard';
 import { cn } from '../utils/cn';
 import { usePhotoDrafts } from '../hooks/usePhotoDrafts';
@@ -52,7 +55,6 @@ type PreStockForm = {
 
 
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 const EMPTY_FORM: PreStockForm = {
   component_number: '',
@@ -79,12 +81,17 @@ const getSupplierNameFromPlatform = (platformName?: string) => {
 const statusLabel = (status: PreStockStatus) => status === 'confirmed' ? '已入库' : '待入库';
 
 export default function PreStocks() {
+  const confirm = useConfirm();
+  const { params, updateQuery, page, pageSize } = useListQuery();
+  const status = params.get('status') === 'confirmed' || params.get('status') === 'all' ? params.get('status') as PreStockStatus | 'all' : 'pending';
+  const resource = useResource<{ data: PreStock[]; pagination: Pagination }>(`/pre-stocks?page=${page}&page_size=${pageSize}&status=${status}`);
+  const loading = resource.loading;
+
   const [items, setItems] = useState<PreStock[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
-  const [statusFilter, setStatusFilter] = useState<PreStockStatus | 'all'>('pending');
-  const [loading, setLoading] = useState(false);
+  const statusFilter = status;
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PreStock | null>(null);
@@ -95,11 +102,6 @@ export default function PreStocks() {
   const [manufacturerOptions, setManufacturerOptions] = useState<string[]>([]);
   const [packageOptions, setPackageOptions] = useState<string[]>([]);
   const [locationOptions, setLocationOptions] = useState<string[]>([]);
-  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
-  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
-  const [showManufacturerDropdown, setShowManufacturerDropdown] = useState(false);
-  const [showPackageDropdown, setShowPackageDropdown] = useState(false);
-  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const [platformCode, setPlatformCode] = useState('');
   const [supplierReference, setSupplierReference] = useState<ParsedComponentInfo>();
   const [parseMode, setParseMode] = useState<ParseMode>('standard');
@@ -113,28 +115,9 @@ export default function PreStocks() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [activeRowId, setActiveRowId] = useState<number | null>(null);
 
-  const totalPage = pagination.total_page || Math.ceil(pagination.total / pagination.page_size);
-  const filteredCategories = useMemo(
-    () => categories.filter(c => c.name.toLowerCase().includes(categoryInput.toLowerCase())),
-    [categories, categoryInput],
-  );
-  const filteredSuppliers = useMemo(
-    () => suppliers.filter(s => s.name.toLowerCase().includes(supplierInput.toLowerCase())),
-    [suppliers, supplierInput],
-  );
-  const filteredManufacturerOptions = useMemo(
-    () => manufacturerOptions.filter(option => option.toLowerCase().includes(form.manufacturer.toLowerCase())),
-    [manufacturerOptions, form.manufacturer],
-  );
-  const filteredPackageOptions = useMemo(
-    () => packageOptions.filter(option => option.toLowerCase().includes(form.package.toLowerCase())),
-    [packageOptions, form.package],
-  );
-  const filteredLocationOptions = useMemo(
-    () => locationOptions.filter(option => option.toLowerCase().includes(form.location.toLowerCase())),
-    [locationOptions, form.location],
-  );
-
+  const formGuard = useFormGuard({ form, category: categoryInput, supplier: supplierInput });
+  const closeForm = () => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); };
+  const cancelForm = async () => { if (!saving && await formGuard.allowClose()) closeForm(); };
   const fetchCategories = async () => {
     const res = await client.get('/categories');
     setCategories(res.data.data || []);
@@ -153,29 +136,17 @@ export default function PreStocks() {
     setLocationOptions(data.locations || []);
   };
 
-  const fetchItems = async (page = pagination.page, pageSize = pagination.page_size, status = statusFilter) => {
-    setLoading(true);
-    try {
-      const res = await client.get('/pre-stocks', {
-        params: { page, page_size: pageSize, status },
-      });
-      setItems(res.data.data || []);
-      setPagination(res.data.pagination || { page, page_size: pageSize, total: 0, total_page: 0 });
-    } catch {
-      toast.error('加载预入库记录失败');
-    } finally {
-      setLoading(false);
-    }
+  const fetchItems = async (nextPage = page, nextSize = pageSize, nextStatus = statusFilter) => {
+    updateQuery({ page: nextPage, page_size: nextSize, status: nextStatus }); resource.refresh();
   };
-
   useEffect(() => {
-    void Promise.all([
-      fetchItems(1, pagination.page_size, statusFilter),
-      fetchCategories(),
-      fetchSuppliers(),
-      fetchComponentOptions(),
-    ]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!resource.data) return;
+    setItems(resource.data.data || []); setPagination(resource.data.pagination);
+    const last = Math.max(1, Math.ceil(resource.data.pagination.total / pageSize));
+    if (page > last) updateQuery({ page: last }, true);
+  }, [resource.data, page, pageSize, updateQuery]);
+  useEffect(() => {
+    void Promise.all([fetchCategories(), fetchSuppliers(), fetchComponentOptions()]).catch(() => toast.error('加载表单选项失败，请刷新重试'));
   }, []);
 
   const openForm = (item?: PreStock) => {
@@ -184,7 +155,7 @@ export default function PreStocks() {
     setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     if (item) {
       setEditingItem(item);
-      setForm({
+      const initialForm = {
         component_number: item.component_number || '',
         name: item.name || '',
         model: item.model || '',
@@ -198,13 +169,16 @@ export default function PreStocks() {
         location: item.location || '',
         datasheet_url: item.datasheet_url || '',
         image_url: item.image_url || '',
-      });
+      };
+      setForm(initialForm);
+      formGuard.reset({ form: initialForm, category: item.category?.name || '', supplier: item.supplier?.name || '' });
       setCategoryInput(item.category?.name || '');
       setSupplierInput(item.supplier?.name || '');
       setPlatformCode(item.supplier_part_number || '');
     } else {
       setEditingItem(null);
       setForm(EMPTY_FORM);
+      formGuard.reset({ form: EMPTY_FORM, category: '', supplier: '' });
       setCategoryInput('');
       setSupplierInput('');
       setPlatformCode('');
@@ -309,10 +283,10 @@ export default function PreStocks() {
       };
 
       if (editingItem) {
-        await client.put(`/pre-stocks/${editingItem.id}`, payload);
+        await inventoryApi.savePreStock(editingItem.id, payload);
         toast.success('预入库记录已更新');
       } else {
-        const res = await client.post('/pre-stocks', payload);
+        const res = await inventoryApi.savePreStock(undefined, payload);
         const number = res.data.data?.component_number;
         toast.success(number ? `已生成编号 ${number}` : '预入库记录已创建');
       }
@@ -389,7 +363,8 @@ export default function PreStocks() {
   });
 
   const handleConfirm = async (item: PreStock) => {
-    if (!confirm(`确认将 ${item.component_number || item.name} 转为正式入库？`)) return;
+    if (!await confirm(`确认将 ${item.component_number || item.name} 转为正式入库？`)) return;
+    if (confirmingId !== null || deletingId !== null) return;
     setConfirmingId(item.id);
     try {
       await client.post(`/pre-stocks/${item.id}/confirm`);
@@ -405,7 +380,8 @@ export default function PreStocks() {
   };
 
   const handleDelete = async (item: PreStock) => {
-    if (!confirm(`确定删除预入库记录 ${item.component_number || item.name}？`)) return;
+    if (!await confirm(`确定删除预入库记录 ${item.component_number || item.name}？`)) return;
+    if (confirmingId !== null || deletingId !== null) return;
     setDeletingId(item.id);
     try {
       await client.delete(`/pre-stocks/${item.id}`);
@@ -420,7 +396,7 @@ export default function PreStocks() {
   };
 
   const handleStatusChange = (status: PreStockStatus | 'all') => {
-    setStatusFilter(status);
+    updateQuery({ status, page: 1 });
     void fetchItems(1, pagination.page_size, status);
   };
 
@@ -450,9 +426,6 @@ export default function PreStocks() {
     );
   };
 
-  const totalPriceCents = yuanToCents(form.total_price_yuan);
-  const showUnitPrice = (form.expected_quantity ?? 0) > 0 && totalPriceCents > 0;
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -462,6 +435,7 @@ export default function PreStocks() {
             <Button variant="outline" onClick={() => fetchItems(1, pagination.page_size)} disabled={loading}>
               <Search className="mr-2 h-4 w-4" /> 刷新
             </Button>
+            <Button variant="outline" onClick={() => setIsScannerOpen(true)}><QrCode className="mr-2 size-4" />扫码录入</Button>
             <Button onClick={() => openForm()}>
               <Plus className="mr-2 h-4 w-4" /> 新建预入库
             </Button>
@@ -469,29 +443,9 @@ export default function PreStocks() {
         }
       />
 
-      <CollapsibleFilterPanel
-        summary={STATUS_FILTER_LABELS[statusFilter]}
-        activeCount={statusFilter !== 'pending' ? 1 : 0}
-      >
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-          <div className="space-y-1">
-            <Label htmlFor="status-filter" className="text-xs text-muted-foreground">状态</Label>
-            <select
-              id="status-filter"
-              value={statusFilter}
-              onChange={e => handleStatusChange(e.target.value as PreStockStatus | 'all')}
-              className="h-9 w-full sm:w-36 rounded-md border border-input bg-background px-2 text-sm"
-            >
-              <option value="pending">待入库</option>
-              <option value="confirmed">已入库</option>
-              <option value="all">全部</option>
-            </select>
-          </div>
-          <div className="text-sm text-muted-foreground sm:ml-auto">共 {pagination.total} 条</div>
-        </div>
-      </CollapsibleFilterPanel>
-
-      <div className="rounded-md border">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div aria-label="预入库状态" className="inline-flex rounded-lg border bg-card p-1">{(['pending', 'confirmed', 'all'] as const).map(value => <Button key={value} size="sm" variant={statusFilter === value ? 'default' : 'ghost'} aria-pressed={statusFilter === value} onClick={() => handleStatusChange(value)}>{STATUS_FILTER_LABELS[value]}</Button>)}</div><p className="text-xs text-muted-foreground">共 {pagination.total} 条记录</p></div>
+      {(loading || resource.error || !items.length) && <div className="surface"><PageState loading={loading} error={resource.error} empty={!items.length} filtered={statusFilter !== 'all'} onRetry={resource.refresh} onClear={() => handleStatusChange('all')} /></div>}
+      <div className={cn('surface hidden md:block', (loading || !!resource.error || !items.length) && 'md:hidden')}>
         <div className="w-full overflow-auto">
           <table className="w-full caption-bottom text-sm text-left">
             <thead>
@@ -519,37 +473,14 @@ export default function PreStocks() {
                   key={item.id}
                   className={cn(
                     'group border-b transition-colors hover:bg-muted/50',
-                    activeRowId === item.id &&
-                      'relative z-10 [&>td:not(:last-child)]:blur-sm [&>td:not(:last-child)]:opacity-60 [&>td:not(:last-child)]:pointer-events-none [&>td:not(:last-child)]:transition-all [&>td:last-child]:z-20',
+
                   )}
                 >
                   <td className="p-4 align-middle whitespace-nowrap">{renderNumber(item)}</td>
                   <td className="p-4 align-middle">
-                    {item.image_url ? (
-                      <button
-                        type="button"
-                        className="w-10 h-10 rounded overflow-hidden bg-secondary/20 flex items-center justify-center hover:opacity-80 transition-opacity"
-                        onClick={() => setPreviewImage(item.image_url)}
-                        title="预览图片"
-                      >
-                        <img
-                          src={item.image_url}
-                          alt=""
-                          className="w-full h-full object-cover"
-                          onError={e => {
-                            const target = e.target as HTMLImageElement;
-                            target.style.display = 'none';
-                            target.parentElement!.innerText = '无图';
-                          }}
-                        />
-                      </button>
-                    ) : (
-                      <div className="w-10 h-10 rounded bg-secondary/20 flex items-center justify-center text-xs text-muted-foreground">
-                        无图
-                      </div>
-                    )}
+                    <button type="button" disabled={!item.image_url} aria-label={`预览 ${item.name} 图片`} onClick={() => setPreviewImage(item.image_url)}><SafeImage src={item.image_url} alt={item.name} className="size-10" /></button>
                   </td>
-                  <td className="p-4 align-middle min-w-40">{item.name}</td>
+                  <td className="p-4 align-middle min-w-40"><button className="text-left font-medium text-primary hover:underline" disabled={item.status !== 'pending'} onClick={() => openForm(item)}>{item.name}</button></td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.model || '-'}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.category?.name || '-'}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{item.supplier?.name || '-'}</td>
@@ -557,7 +488,7 @@ export default function PreStocks() {
                   <td className="p-4 align-middle whitespace-nowrap">{item.expected_quantity}</td>
                   <td className="p-4 align-middle whitespace-nowrap">{formatCents(item.total_price_cents || 0)}</td>
                   <td className="p-4 align-middle whitespace-nowrap">
-                    <span className={item.status === 'confirmed' ? 'text-green-600' : 'text-amber-600'}>
+                    <span className={item.status === 'confirmed' ? 'status-badge' : 'status-badge bg-amber-500/10 text-amber-600 dark:text-amber-400'}>
                       {statusLabel(item.status)}
                     </span>
                   </td>
@@ -598,340 +529,21 @@ export default function PreStocks() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row justify-between gap-3 items-start sm:items-center">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span>每页</span>
-          <select
-            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-            value={pagination.page_size}
-            onChange={e => handlePageSizeChange(Number(e.target.value))}
-          >
-            {PAGE_SIZE_OPTIONS.map(size => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
-          <span>条</span>
-        </div>
-        <div className="flex gap-2 items-center">
-          <Button variant="outline" disabled={pagination.page <= 1} onClick={() => handlePageChange(pagination.page - 1)}>上一页</Button>
-          <span>第 {pagination.page} / {Math.max(totalPage, 1)} 页</span>
-          <Button variant="outline" disabled={totalPage === 0 || pagination.page >= totalPage} onClick={() => handlePageChange(pagination.page + 1)}>下一页</Button>
-        </div>
-      </div>
+      {!loading && !resource.error && <div className="space-y-3 md:hidden">{items.map(item => <article key={item.id} className="surface p-4"><div className="flex items-start gap-3"><SafeImage src={item.image_url} alt={item.name} className="size-12 shrink-0" /><div className="min-w-0 flex-1"><p className="break-all font-semibold">{item.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{item.component_number} · {item.model || item.supplier_part_number || '暂无型号'}</p></div><span className="status-badge shrink-0">{statusLabel(item.status)}</span></div><div className="mt-3 flex justify-between border-t pt-3 text-xs text-muted-foreground"><span>预计 {item.expected_quantity} 件 · {item.location || '未设置位置'}</span><span>{formatCents(item.total_price_cents || 0)}</span></div>{item.status === 'pending' ? <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => openForm(item)}>编辑</Button><Button size="sm" onClick={() => void handleConfirm(item)} disabled={confirmingId !== null || deletingId !== null}>确认入库</Button><Button size="sm" variant="ghost" className="ml-auto text-destructive" onClick={() => void handleDelete(item)} disabled={confirmingId !== null || deletingId !== null}>删除</Button></div> : <p className="mt-3 text-xs text-muted-foreground">关联元件 #{item.component_id}</p>}</article>)}</div>}
+      <PaginationControl pagination={pagination} onPageChange={handlePageChange} onPageSizeChange={handlePageSizeChange} disabled={loading} />
 
       <PhotoParseModal isOpen={isPhotoParseOpen} onClose={() => { setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined); }} source="pre-stocks" recordID={editingItem?.id} initialTask={recoveredPhotoTask} onConfirm={applyPhotoResults} />
 
-      <Modal
-        isOpen={isFormOpen && !isPhotoParseOpen}
-        onClose={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }}
-        title={editingItem ? '编辑预入库' : '新建预入库'}
-        className="max-w-2xl"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }} disabled={saving}>取消</Button>
-            <Button onClick={handleSubmit} disabled={saving}>
-              {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />保存中...</> : '保存'}
-            </Button>
-          </>
-        }
-      >
-        <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
-          <PhotoDraftNavigation index={photoDrafts.index} count={photoDrafts.drafts.length} disabled={saving} onSelect={switchPhotoDraft} />
-          <div className="bg-secondary/20 p-4 rounded-md space-y-4">
-            <Label>快速导入</Label>
-            <ParseTaskStatus task={parseTask.task} />
-            <SupplierReference component={matchingSupplierReference(supplierReference, form.supplier_part_number, platformCode)} />
-            <div className="flex gap-2">
-              <Input
-                placeholder="输入平台编码 (如 C2040)"
-                value={platformCode}
-                onChange={e => setPlatformCode(e.target.value)}
-              />
-              <Button onClick={parsePlatform} disabled={isParsing || !platformCode.trim()}>
-                {isParsing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />解析中...</> : '解析'}
-              </Button>
-              <Button variant="outline" onClick={() => setIsPhotoParseOpen(true)} disabled={isParsing}><Camera className="mr-2 h-4 w-4" />拍照 AI</Button>
-              <Button variant="outline" onClick={() => setIsScannerOpen(true)} disabled={isParsing}>
-                <QrCode className="mr-2 h-4 w-4" /> 扫码
-              </Button>
-            </div>
-            <ParseModeSelect value={parseMode} onChange={setParseMode} />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>分类</Label>
-              <div className="relative">
-                <Input
-                  value={categoryInput}
-                  onChange={e => {
-                    setCategoryInput(e.target.value);
-                    setShowCategoryDropdown(true);
-                  }}
-                  onFocus={() => setShowCategoryDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
-                  placeholder="输入或选择分类"
-                />
-                {showCategoryDropdown && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                    {filteredCategories.map(c => (
-                      <div
-                        key={c.id}
-                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setCategoryInput(c.name);
-                          setShowCategoryDropdown(false);
-                        }}
-                      >
-                        {c.name}
-                      </div>
-                    ))}
-                    {filteredCategories.length === 0 && (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        {categoryInput ? '保存时创建新分类' : '无匹配分类'}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>元件编号</Label>
-              <div className="relative">
-                <Hash className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  value={form.component_number}
-                  onChange={e => setForm({ ...form, component_number: e.target.value })}
-                  placeholder="留空则保存时自动生成"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>名称</Label>
-              <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>厂家型号</Label>
-              <Input value={form.model} onChange={e => setForm({ ...form, model: e.target.value })} placeholder="例如 RC0603FR-0710KL" />
-            </div>
-            <div className="space-y-2">
-              <Label>制造商</Label>
-              <div className="relative">
-                <Input
-                  value={form.manufacturer}
-                  onChange={e => {
-                    setForm({ ...form, manufacturer: e.target.value });
-                    setShowManufacturerDropdown(true);
-                  }}
-                  onFocus={() => setShowManufacturerDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowManufacturerDropdown(false), 200)}
-                  placeholder="例如 YAGEO"
-                />
-                {showManufacturerDropdown && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                    {filteredManufacturerOptions.map(option => (
-                      <div
-                        key={option}
-                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setForm({ ...form, manufacturer: option });
-                          setShowManufacturerDropdown(false);
-                        }}
-                      >
-                        {option}
-                      </div>
-                    ))}
-                    {filteredManufacturerOptions.length === 0 && (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        {form.manufacturer ? '无匹配制造商' : '无历史制造商'}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>参数值</Label>
-              <Input value={form.value} onChange={e => setForm({ ...form, value: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>封装</Label>
-              <div className="relative">
-                <Input
-                  value={form.package}
-                  onChange={e => {
-                    setForm({ ...form, package: e.target.value });
-                    setShowPackageDropdown(true);
-                  }}
-                  onFocus={() => setShowPackageDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowPackageDropdown(false), 200)}
-                  placeholder="例如 0603"
-                />
-                {showPackageDropdown && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                    {filteredPackageOptions.map(option => (
-                      <div
-                        key={option}
-                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setForm({ ...form, package: option });
-                          setShowPackageDropdown(false);
-                        }}
-                      >
-                        {option}
-                      </div>
-                    ))}
-                    {filteredPackageOptions.length === 0 && (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        {form.package ? '无匹配封装' : '无历史封装'}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>供应商</Label>
-              <div className="relative">
-                <Input
-                  value={supplierInput}
-                  onChange={e => {
-                    setSupplierInput(e.target.value);
-                    setShowSupplierDropdown(true);
-                  }}
-                  onFocus={() => setShowSupplierDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowSupplierDropdown(false), 200)}
-                  placeholder="例如 嘉立创"
-                />
-                {showSupplierDropdown && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                    {filteredSuppliers.map(s => (
-                      <div
-                        key={s.id}
-                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setSupplierInput(s.name);
-                          setShowSupplierDropdown(false);
-                        }}
-                      >
-                        {s.name}
-                      </div>
-                    ))}
-                    {filteredSuppliers.length === 0 && (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        {supplierInput ? '保存时创建新供应商' : '无匹配供应商'}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>供应商料号</Label>
-              <Input value={form.supplier_part_number} onChange={e => setForm({ ...form, supplier_part_number: e.target.value })} placeholder="例如 C2040" />
-            </div>
-            <div className="space-y-2">
-              <Label>预计数量</Label>
-              <div className="flex items-center space-x-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 shrink-0"
-                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: Math.max(0, (prev.expected_quantity ?? 0) - 1) }))}
-                >
-                  <Minus className="h-4 w-4" />
-                </Button>
-                <Input
-                  type="number"
-                  min="0"
-                  value={form.expected_quantity ?? ''}
-                  onChange={e => setForm({ ...form, expected_quantity: e.target.value === '' ? null : Number(e.target.value) })}
-                  className="text-center"
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 shrink-0"
-                  onClick={() => setForm(prev => ({ ...prev, expected_quantity: (prev.expected_quantity ?? 0) + 1 }))}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-              <QuantityShortcuts
-                value={form.expected_quantity ?? undefined}
-                onSelect={quantity => setForm(prev => ({ ...prev, expected_quantity: quantity }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>采购总价（元）</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.total_price_yuan}
-                onChange={e => setForm({ ...form, total_price_yuan: e.target.value })}
-                placeholder="可选，确认入库时分摊单价"
-              />
-              {showUnitPrice && (
-                <p className="text-xs text-muted-foreground">
-                  分摊单价：{formatMicro(calcUnitPriceMicro(totalPriceCents, form.expected_quantity ?? 0))}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>位置</Label>
-              <div className="relative">
-                <Input
-                  value={form.location}
-                  onChange={e => {
-                    setForm({ ...form, location: e.target.value });
-                    setShowLocationDropdown(true);
-                  }}
-                  onFocus={() => setShowLocationDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowLocationDropdown(false), 200)}
-                  placeholder="例如 A1-03"
-                />
-                {showLocationDropdown && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                    {filteredLocationOptions.map(option => (
-                      <div
-                        key={option}
-                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setForm({ ...form, location: option });
-                          setShowLocationDropdown(false);
-                        }}
-                      >
-                        {option}
-                      </div>
-                    ))}
-                    {filteredLocationOptions.length === 0 && (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        {form.location ? '无匹配位置' : '无历史位置'}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>数据手册 URL</Label>
-              <Input value={form.datasheet_url} onChange={e => setForm({ ...form, datasheet_url: e.target.value })} />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label>图片 URL</Label>
-              <Input value={form.image_url} onChange={e => setForm({ ...form, image_url: e.target.value })} />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label>描述</Label>
-              <textarea
-                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                value={form.description}
-                onChange={e => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-          </div>
+      <Modal isOpen={isFormOpen && !isPhotoParseOpen} onClose={closeForm} dirty={formGuard.dirty} busy={saving} title={editingItem ? '编辑预入库' : '新建预入库'} variant="drawer"
+        footer={<><span className="mr-auto text-xs text-muted-foreground">收货后确认进入正式库存</span><Button variant="outline" onClick={() => void cancelForm()} disabled={saving}>取消</Button><Button type="submit" form="inventory-form" disabled={saving}>{saving ? <><Loader2 className="mr-2 size-4 animate-spin" />保存中…</> : '保存'}</Button></>}>
+        <div className="space-y-4"><PhotoDraftNavigation index={photoDrafts.index} count={photoDrafts.drafts.length} disabled={saving} onSelect={switchPhotoDraft} />
+          <SmartEntry code={platformCode} onCodeChange={setPlatformCode} onParse={() => void parsePlatform()} onScan={() => setIsScannerOpen(true)} onPhoto={() => setIsPhotoParseOpen(true)} busy={isParsing} mode={parseMode} onModeChange={setParseMode} task={parseTask.task} reference={matchingSupplierReference(supplierReference, form.supplier_part_number, platformCode)} />
+          <InventoryFields value={{ ...form, quantity: form.expected_quantity, category: categoryInput, supplier: supplierInput, totalPrice: form.total_price_yuan }} onChange={patch => {
+            const { quantity, category, supplier, totalPrice, ...fields } = patch;
+            if ('quantity' in patch) setForm(prev => ({ ...prev, expected_quantity: quantity ?? null }));
+            if (category !== undefined) setCategoryInput(category); if (supplier !== undefined) setSupplierInput(supplier);
+            setForm(prev => ({ ...prev, ...fields, component_number: fields.component_number ?? prev.component_number, total_price_yuan: totalPrice ?? prev.total_price_yuan }));
+          }} onSubmit={() => void handleSubmit()} categories={categories.map(c => c.name)} suppliers={suppliers.map(s => s.name)} manufacturers={manufacturerOptions} packages={packageOptions} locations={locationOptions} preStock editing={!!editingItem} busy={saving} />
         </div>
       </Modal>
 
@@ -949,11 +561,7 @@ export default function PreStocks() {
       >
         <div className="flex justify-center items-center bg-black/5 rounded-md overflow-hidden min-h-[200px]">
           {previewImage && (
-            <img
-              src={previewImage}
-              alt="Preview"
-              className="max-w-full max-h-[80vh] object-contain"
-            />
+            <SafeImage src={previewImage} alt="图片预览" className="max-h-[70vh] w-full" />
           )}
         </div>
       </Modal>

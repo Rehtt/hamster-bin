@@ -1,12 +1,14 @@
-FROM node:20-alpine AS frontend
+FROM node:24-alpine AS frontend
 
 WORKDIR /src/web
 
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN npm install --global pnpm@11.3.0
+
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY web/ ./
-RUN npm run build
+RUN pnpm run build
 
 FROM golang:1.25-alpine3.23 AS builder
 

@@ -1,38 +1,32 @@
-import { ParseModeSelect } from '../components/ParseModeSelect';
+import { ComponentLogsDialog } from '../components/inventory/ComponentLogsDialog';
+import { inventoryApi, componentSaveInput, type ComponentDraft } from '../api/inventory';
+import { useConfirm } from '../context/confirm';
+import { useListQuery } from '../hooks/useListQuery';
+import { useResource } from '../hooks/useResource';
+import { useFormGuard, useSubmitLock } from '../hooks/useFormGuard';
+import { InventoryFields } from '../components/inventory/InventoryFields';
+import { SmartEntry } from '../components/inventory/SmartEntry';
+import { SearchSelect } from '../components/ui/SearchSelect';
+import { PageState } from '../components/ui/PageState';
+import { Pagination as PaginationControl } from '../components/ui/Pagination';
+import { SafeImage } from '../components/ui/SafeImage';
+import { ComponentDetail } from '../components/inventory/ComponentDetail';
+import { ColumnSettingsPanel } from '../components/inventory/ColumnSettings';
+import { EXPORT_COLUMNS, VALID_SORT_BY_KEYS, getColumnHeader, createDefaultExportColumns, createDefaultTableColumns, readStoredExportColumns, persistExportColumns, readStoredTableColumns, persistTableColumns, readStoredComponentSort, persistComponentSort, type ExportColumnKey, type ComponentSortOrder, type ColumnState } from '../components/inventory/columns';
 import type { ParseMode } from '../types';
 import { useParseTask } from '../hooks/useParseTask';
 import { useTaskApplication } from '../hooks/useTaskApplication';
-import { ParseTaskStatus } from '../components/ParseTaskStatus';
 import { mergeParsed, parsedComponentFields, matchingSupplierReference } from '../utils/parseResult';
-import { SupplierReference } from '../components/SupplierReference';
-import { lazy, Suspense, useEffect, useState, useRef } from 'react';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, Loader2, Hash, Download, Coins, Columns3, GripVertical, PackageMinus } from 'lucide-react';
+import { lazy, Suspense, useEffect, useState, useRef, Fragment } from 'react';
+import { Plus, Minus, Search, Edit, Copy, Trash2, Database, History, QrCode, Camera, Upload, SlidersHorizontal, X, Loader2, Hash, Download, Coins, Columns3, PackageMinus } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import client from '../api/client';
-import { type Component, type Category, type Supplier, type StockLog, type Pagination, type ComponentOptions, type ParsedComponentInfo, type ReviewedImageItem, type ParseTask } from '../types';
+import { type Component, type Category, type Supplier, type Pagination, type ComponentOptions, type ParsedComponentInfo, type ReviewedImageItem, type ParseTask } from '../types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Label } from '../components/ui/Label';
 import { PageHeader } from '../components/ui/PageHeader';
-import { CollapsibleFilterPanel, type CollapsibleFilterPanelHandle } from '../components/ui/CollapsibleFilterPanel';
 import { QuantityShortcuts } from '../components/ui/QuantityShortcuts';
 import { RowActionsMenu } from '../components/ui/RowActionsMenu';
 import { BatchStockOutModal } from '../components/BatchStockOutModal';
@@ -45,19 +39,10 @@ const CameraCapture = lazy(() => import('../components/CameraCapture'));
 import { yuanToCents, formatCents, formatMicro, calcUnitPriceMicro, calcOutboundCostCents } from '../utils/price';
 import { copyToClipboard } from '../utils/clipboard';
 import { cn } from '../utils/cn';
-import {
-  canRevoke,
-  isReversal,
-  isRevoked,
-  stockLogAmountClass,
-  stockLogCardClass,
-  stockLogIconClass,
-  formatStockLogChangeAmount,
-  stockLogIconLabel,
-  isBackfillLog,
-} from '../utils/stockLog';
+
 
 type ComponentSearchFilters = {
+  keyword: string;
   component_number: string;
   name: string;
   model: string;
@@ -67,22 +52,8 @@ type ComponentSearchFilters = {
   supplier_part_number: string;
 };
 
-type ComponentSearchParams = {
-  page: number;
-  page_size: number;
-  category_id?: string;
-  component_number?: string;
-  name?: string;
-  model?: string;
-  manufacturer?: string;
-  value?: string;
-  supplier?: string;
-  supplier_part_number?: string;
-  sort_by?: string;
-  sort_order?: string;
-};
-
 const EMPTY_SEARCH_FILTERS: ComponentSearchFilters = {
+  keyword: '',
   component_number: '',
   name: '',
   model: '',
@@ -101,6 +72,7 @@ const SEARCH_FILTER_FIELDS: { key: keyof ComponentSearchFilters; label: string; 
 ];
 
 const SEARCH_PARAM_KEYS: (keyof ComponentSearchFilters)[] = [
+  'keyword',
   'component_number',
   'name',
   'model',
@@ -110,335 +82,6 @@ const SEARCH_PARAM_KEYS: (keyof ComponentSearchFilters)[] = [
   'supplier_part_number',
 ];
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
-
-type ExportColumnKey =
-  | 'component_number'
-  | 'name'
-  | 'model'
-  | 'manufacturer'
-  | 'value'
-  | 'package'
-  | 'description'
-  | 'category'
-  | 'stock_quantity'
-  | 'unit_price'
-  | 'location'
-  | 'supplier'
-  | 'supplier_part_number'
-  | 'datasheet_url'
-  | 'created_at'
-  | 'updated_at';
-
-type ComponentSortOrder = 'asc' | 'desc';
-
-const DEFAULT_SORT_BY: ExportColumnKey = 'updated_at';
-const DEFAULT_SORT_ORDER: ComponentSortOrder = 'desc';
-const COMPONENT_SORT_STORAGE_KEY = 'hamster-components-sort';
-
-type StoredComponentSort = {
-  sortBy: ExportColumnKey;
-  sortOrder: ComponentSortOrder;
-};
-
-type ExportColumnConfig = {
-  key: ExportColumnKey;
-  defaultHeader: string;
-  defaultSelected: boolean;
-  defaultTableSelected: boolean;
-};
-
-type ColumnState = {
-  key: ExportColumnKey;
-  selected: boolean;
-  header: string;
-};
-
-const EXPORT_COLUMNS: ExportColumnConfig[] = [
-  { key: 'component_number', defaultHeader: '系统编号', defaultSelected: true, defaultTableSelected: true },
-  { key: 'name', defaultHeader: '名称', defaultSelected: true, defaultTableSelected: true },
-  { key: 'model', defaultHeader: '厂家型号', defaultSelected: true, defaultTableSelected: true },
-  { key: 'manufacturer', defaultHeader: '制造商', defaultSelected: true, defaultTableSelected: true },
-  { key: 'value', defaultHeader: '参数', defaultSelected: true, defaultTableSelected: true },
-  { key: 'package', defaultHeader: '封装', defaultSelected: true, defaultTableSelected: true },
-  { key: 'description', defaultHeader: '描述', defaultSelected: false, defaultTableSelected: true },
-  { key: 'category', defaultHeader: '分类', defaultSelected: true, defaultTableSelected: true },
-  { key: 'stock_quantity', defaultHeader: '库存数量', defaultSelected: true, defaultTableSelected: true },
-  { key: 'unit_price', defaultHeader: '参考单价', defaultSelected: true, defaultTableSelected: false },
-  { key: 'location', defaultHeader: '存放位置', defaultSelected: true, defaultTableSelected: true },
-  { key: 'supplier', defaultHeader: '供应商', defaultSelected: true, defaultTableSelected: true },
-  { key: 'supplier_part_number', defaultHeader: '供应商料号', defaultSelected: true, defaultTableSelected: true },
-  { key: 'datasheet_url', defaultHeader: '数据手册', defaultSelected: false, defaultTableSelected: true },
-  { key: 'created_at', defaultHeader: '创建时间', defaultSelected: false, defaultTableSelected: false },
-  { key: 'updated_at', defaultHeader: '更新时间', defaultSelected: false, defaultTableSelected: false },
-];
-
-const VALID_COLUMN_KEYS = new Set<ExportColumnKey>(EXPORT_COLUMNS.map(column => column.key));
-const EXPORT_COLUMNS_STORAGE_KEY = 'hamster-components-export-columns';
-const TABLE_COLUMNS_STORAGE_KEY = 'hamster-components-table-columns';
-
-const getColumnConfig = (key: ExportColumnKey) =>
-  EXPORT_COLUMNS.find(column => column.key === key);
-
-const getColumnHeader = (column: ColumnState) => {
-  const trimmed = column.header.trim();
-  if (trimmed) return trimmed;
-  return getColumnConfig(column.key)?.defaultHeader || column.key;
-};
-
-const createDefaultExportColumns = (): ColumnState[] =>
-  EXPORT_COLUMNS.map(column => ({
-    key: column.key,
-    selected: column.defaultSelected,
-    header: column.defaultHeader,
-  }));
-
-const createDefaultTableColumns = (): ColumnState[] =>
-  EXPORT_COLUMNS.map(column => ({
-    key: column.key,
-    selected: column.defaultTableSelected,
-    header: column.defaultHeader,
-  }));
-
-const normalizeStoredColumns = (
-  stored: unknown,
-  createDefault: () => ColumnState[],
-  getDefaultSelected: (key: ExportColumnKey) => boolean,
-): ColumnState[] => {
-  const defaults = createDefault();
-  if (!Array.isArray(stored)) return defaults;
-
-  const result: ColumnState[] = [];
-  const seen = new Set<ExportColumnKey>();
-
-  for (const item of stored) {
-    if (!item || typeof item !== 'object') continue;
-    const key = (item as ColumnState).key;
-    if (!VALID_COLUMN_KEYS.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    const config = getColumnConfig(key)!;
-    result.push({
-      key,
-      selected: typeof (item as ColumnState).selected === 'boolean'
-        ? (item as ColumnState).selected
-        : getDefaultSelected(key),
-      header: typeof (item as ColumnState).header === 'string'
-        ? (item as ColumnState).header
-        : config.defaultHeader,
-    });
-  }
-
-  for (const column of EXPORT_COLUMNS) {
-    if (!seen.has(column.key)) {
-      result.push({
-        key: column.key,
-        selected: getDefaultSelected(column.key),
-        header: column.defaultHeader,
-      });
-    }
-  }
-
-  if (!result.some(column => column.selected)) return defaults;
-  return result;
-};
-
-const readStoredExportColumns = (): ColumnState[] => {
-  try {
-    const raw = localStorage.getItem(EXPORT_COLUMNS_STORAGE_KEY);
-    if (!raw) return createDefaultExportColumns();
-    return normalizeStoredColumns(
-      JSON.parse(raw),
-      createDefaultExportColumns,
-      key => getColumnConfig(key)!.defaultSelected,
-    );
-  } catch {
-    return createDefaultExportColumns();
-  }
-};
-
-const persistExportColumns = (columns: ColumnState[]) => {
-  try {
-    localStorage.setItem(EXPORT_COLUMNS_STORAGE_KEY, JSON.stringify(columns));
-  } catch {
-    // ignore quota or privacy mode errors
-  }
-};
-
-const readStoredTableColumns = (): ColumnState[] => {
-  try {
-    const raw = localStorage.getItem(TABLE_COLUMNS_STORAGE_KEY);
-    if (!raw) return createDefaultTableColumns();
-    return normalizeStoredColumns(
-      JSON.parse(raw),
-      createDefaultTableColumns,
-      key => getColumnConfig(key)!.defaultTableSelected,
-    );
-  } catch {
-    return createDefaultTableColumns();
-  }
-};
-
-const persistTableColumns = (columns: ColumnState[]) => {
-  try {
-    localStorage.setItem(TABLE_COLUMNS_STORAGE_KEY, JSON.stringify(columns));
-  } catch {
-    // ignore quota or privacy mode errors
-  }
-};
-
-const VALID_SORT_BY_KEYS = new Set<ExportColumnKey>(EXPORT_COLUMNS.map(column => column.key));
-
-const readStoredComponentSort = (): StoredComponentSort => {
-  const fallback: StoredComponentSort = { sortBy: DEFAULT_SORT_BY, sortOrder: DEFAULT_SORT_ORDER };
-  try {
-    const raw = localStorage.getItem(COMPONENT_SORT_STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as { sortBy?: string; sortOrder?: string };
-    const sortBy = VALID_SORT_BY_KEYS.has(parsed.sortBy as ExportColumnKey)
-      ? (parsed.sortBy as ExportColumnKey)
-      : DEFAULT_SORT_BY;
-    const sortOrder = parsed.sortOrder === 'asc' || parsed.sortOrder === 'desc'
-      ? parsed.sortOrder
-      : DEFAULT_SORT_ORDER;
-    return { sortBy, sortOrder };
-  } catch {
-    return fallback;
-  }
-};
-
-const persistComponentSort = (sortBy: ExportColumnKey, sortOrder: ComponentSortOrder) => {
-  try {
-    localStorage.setItem(COMPONENT_SORT_STORAGE_KEY, JSON.stringify({ sortBy, sortOrder }));
-  } catch {
-    // ignore quota or privacy mode errors
-  }
-};
-
-
-
-type SortableColumnRowProps = {
-  column: ColumnState;
-  onToggle: (key: ExportColumnKey, selected: boolean) => void;
-  onUpdateHeader: (key: ExportColumnKey, header: string) => void;
-};
-
-function SortableColumnRow({ column, onToggle, onUpdateHeader }: SortableColumnRowProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: column.key });
-
-  const defaultHeader = getColumnConfig(column.key)?.defaultHeader || column.key;
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="grid grid-cols-1 sm:grid-cols-[auto_auto_1fr] gap-2 sm:gap-3 items-center px-3 py-3 border-b last:border-b-0"
-    >
-      <button
-        type="button"
-        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground cursor-grab active:cursor-grabbing touch-none"
-        title="拖动调整顺序"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <label className="flex items-center gap-2 text-sm whitespace-nowrap">
-        <input
-          type="checkbox"
-          checked={column.selected}
-          onChange={e => onToggle(column.key, e.target.checked)}
-          className="h-4 w-4 rounded border-input"
-        />
-        {defaultHeader}
-      </label>
-      <Input
-        value={column.header}
-        onChange={e => onUpdateHeader(column.key, e.target.value)}
-        placeholder={defaultHeader}
-        disabled={!column.selected}
-      />
-    </div>
-  );
-}
-
-type ColumnSettingsPanelProps = {
-  columns: ColumnState[];
-  isAllSelected: boolean;
-  onToggle: (key: ExportColumnKey, selected: boolean) => void;
-  onUpdateHeader: (key: ExportColumnKey, header: string) => void;
-  onToggleAll: (selected: boolean) => void;
-  onReorder: (columns: ColumnState[]) => void;
-};
-
-function ColumnSettingsPanel({
-  columns,
-  isAllSelected,
-  onToggle,
-  onUpdateHeader,
-  onToggleAll,
-  onReorder,
-}: ColumnSettingsPanelProps) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = columns.findIndex(column => column.key === active.id);
-    const newIndex = columns.findIndex(column => column.key === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-
-    onReorder(arrayMove(columns, oldIndex, newIndex));
-  };
-
-  return (
-    <>
-      <div className="flex items-center justify-between rounded-md border px-3 py-2">
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <input
-            type="checkbox"
-            checked={isAllSelected}
-            onChange={e => onToggleAll(e.target.checked)}
-            className="h-4 w-4 rounded border-input"
-          />
-          全选
-        </label>
-        <span className="text-xs text-muted-foreground">
-          已选 {columns.filter(column => column.selected).length} / {columns.length} 列
-        </span>
-      </div>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={columns.map(column => column.key)} strategy={verticalListSortingStrategy}>
-          <div className="max-h-[50vh] overflow-auto rounded-md border">
-            {columns.map(column => (
-              <SortableColumnRow
-                key={column.key}
-                column={column}
-                onToggle={onToggle}
-                onUpdateHeader={onUpdateHeader}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
-    </>
-  );
-}
 
 const renderCopyableCell = (value: string | null | undefined, className?: string) => {
   const text = value?.trim();
@@ -464,20 +107,34 @@ const renderCopyableCell = (value: string | null | undefined, className?: string
 };
 
 export default function Components() {
+  const confirm = useConfirm();
+  const { params: urlParams, updateQuery, page: urlPage, pageSize: urlPageSize } = useListQuery();
+  const storedSort = readStoredComponentSort();
+  const query = new URLSearchParams();
+  for (const key of SEARCH_PARAM_KEYS) { const value = urlParams.get(key)?.trim(); if (value) query.set(key, value); }
+  if (urlParams.get('category_id')) query.set('category_id', urlParams.get('category_id')!);
+  query.set('page', String(urlPage)); query.set('page_size', String(urlPageSize));
+  query.set('sort_by', VALID_SORT_BY_KEYS.has(urlParams.get('sort_by') as ExportColumnKey) ? urlParams.get('sort_by')! : storedSort.sortBy);
+  query.set('sort_order', urlParams.get('sort_order') === 'asc' || urlParams.get('sort_order') === 'desc' ? urlParams.get('sort_order')! : storedSort.sortOrder);
+  const queryKey = query.toString();
+  const resource = useResource<{ data: Component[]; pagination: Pagination }>(`/components?${queryKey}`);
+  const loading = resource.loading;
+  const [advanced, setAdvanced] = useState(false);
+  const [detailID, setDetailID] = useState<number | null>(null);
+  const stockMutation = useSubmitLock();
+  const backfillMutation = useSubmitLock();
+
   const [components, setComponents] = useState<Component[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 20, total: 0, total_page: 0 });
-  const [loading, setLoading] = useState(false);
-  const [searchFilters, setSearchFilters] = useState<ComponentSearchFilters>(EMPTY_SEARCH_FILTERS);
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [searchFilters, setSearchFilters] = useState<ComponentSearchFilters>(() => Object.fromEntries(SEARCH_PARAM_KEYS.map(key => [key, urlParams.get(key) || ''])) as ComponentSearchFilters);
+  const [selectedCategory, setSelectedCategory] = useState<string>(urlParams.get('category_id') || '');
   const [categorySearchInput, setCategorySearchInput] = useState('');
   const [manufacturerOptions, setManufacturerOptions] = useState<string[]>([]);
-  const [showSearchManufacturerDropdown, setShowSearchManufacturerDropdown] = useState(false);
-  const [showSearchSupplierDropdown, setShowSearchSupplierDropdown] = useState(false);
-  const [showSearchCategoryDropdown, setShowSearchCategoryDropdown] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [activeRowId, setActiveRowId] = useState<number | null>(null);
+  const [mobileActiveRowId, setMobileActiveRowId] = useState<number | null>(null);
   const [isBatchLocationOpen, setIsBatchLocationOpen] = useState(false);
   const [batchLocation, setBatchLocation] = useState('');
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
@@ -506,25 +163,18 @@ export default function Components() {
   // Form State
   const [editingComponent, setEditingComponent] = useState<Component | null>(null);
   const [isCopyingComponent, setIsCopyingComponent] = useState(false);
-  const [formData, setFormData] = useState<Partial<Component>>({
+  const [formData, setFormData] = useState<ComponentDraft>({
     name: '', category_id: undefined, stock_quantity: 0
   });
   const [categoryInput, setCategoryInput] = useState('');
-  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [supplierInput, setSupplierInput] = useState('');
-  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
   const [packageOptions, setPackageOptions] = useState<string[]>([]);
   const [locationOptions, setLocationOptions] = useState<string[]>([]);
-  const [showPackageDropdown, setShowPackageDropdown] = useState(false);
-  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
-  const [showBatchLocationDropdown, setShowBatchLocationDropdown] = useState(false);
   
   // Image Upload State
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const filterPanelRef = useRef<CollapsibleFilterPanelHandle>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
-  const [showImageMenu, setShowImageMenu] = useState(false);
   const [formTotalPriceYuan, setFormTotalPriceYuan] = useState('');
 
 
@@ -533,10 +183,6 @@ export default function Components() {
   const [backfillTarget, setBackfillTarget] = useState<Component | null>(null);
   const [backfillForm, setBackfillForm] = useState({ totalPriceYuan: '', quantity: 1 });
   
-  // Logs State
-  const [componentLogs, setComponentLogs] = useState<StockLog[]>([]);
-  const [revokingLogId, setRevokingLogId] = useState<number | null>(null);
-
   // Platform Import
   const [platformCode, setPlatformCode] = useState('');
   const [supplierReference, setSupplierReference] = useState<ParsedComponentInfo>();
@@ -549,6 +195,10 @@ export default function Components() {
   const [saving, setSaving] = useState(false);
 
   const [isMobile, setIsMobile] = useState(false);
+  const formGuard = useFormGuard({ form: formData, category: categoryInput, supplier: supplierInput, price: formTotalPriceYuan, file: selectedFile?.name || '' });
+  const closeForm = () => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); };
+  const cancelForm = async () => { if (!saving && await formGuard.allowClose()) closeForm(); };
+
 
   const getSupplierNameFromPlatform = (platformName?: string) => {
     if (!platformName) return '';
@@ -558,7 +208,7 @@ export default function Components() {
 
   const parsedInfoToFormData = parsedComponentFields;
 
-  type ParseSnapshot = { platformCode: string; form: Partial<Component>; category: string; supplier: string; price: string; preview: string; file: File | null };
+  type ParseSnapshot = { platformCode: string; form: ComponentDraft; category: string; supplier: string; price: string; preview: string; file: File | null };
   type PhotoDraft = ParseSnapshot & { platformCode: string };
   const applyParsedComponent = (component: ParsedComponentInfo, quantity?: number, snapshot?: ParseSnapshot) => {
     setSupplierReference(component);
@@ -601,40 +251,31 @@ export default function Components() {
   };
 
   const fetchComponents = async (
-    page = 1,
-    pageSize = pagination.page_size,
-    filters: ComponentSearchFilters = searchFilters,
-    categoryInput: string = categorySearchInput,
-    categoryId: string = selectedCategory,
-    nextSortBy: ExportColumnKey = sortBy,
-    nextSortOrder: ComponentSortOrder = sortOrder,
+    page = urlPage, pageSize = urlPageSize, filters: ComponentSearchFilters = searchFilters,
+    categoryInput = categorySearchInput, categoryId = selectedCategory,
+    nextSortBy: ExportColumnKey = sortBy, nextSortOrder: ComponentSortOrder = sortOrder,
   ) => {
-    const showLoading = components.length === 0;
-    if (showLoading) setLoading(true);
-    try {
-      const params: ComponentSearchParams = {
-        page,
-        page_size: pageSize,
-        sort_by: nextSortBy,
-        sort_order: nextSortOrder,
-      };
-      const resolvedCategoryId = resolveCategoryId(categoryInput, categoryId);
-      if (resolvedCategoryId) params.category_id = resolvedCategoryId;
-      for (const key of SEARCH_PARAM_KEYS) {
-        const value = filters[key].trim();
-        if (value) params[key] = value;
-      }
-
-      const res = await client.get('/components', { params });
-      setComponents(res.data.data || []);
-      setPagination(res.data.pagination || { page: 1, page_size: 20, total: 0, total_page: 0 });
-      setSelectedIds([]);
-    } catch {
-      toast.error('加载元件失败');
-    } finally {
-      if (showLoading) setLoading(false);
-    }
+    const patch: Record<string, string | number> = { page, page_size: pageSize, category_id: resolveCategoryId(categoryInput, categoryId), sort_by: nextSortBy, sort_order: nextSortOrder };
+    for (const key of SEARCH_PARAM_KEYS) patch[key] = filters[key].trim();
+    updateQuery(patch);
+    resource.refresh();
   };
+  useEffect(() => {
+    const query = new URLSearchParams(queryKey);
+    setSearchFilters(Object.fromEntries(SEARCH_PARAM_KEYS.map(key => [key, query.get(key) || ''])) as ComponentSearchFilters);
+    setSelectedCategory(query.get('category_id') || '');
+    setCategorySearchInput('');
+    setSortBy(query.get('sort_by') as ExportColumnKey); setSortOrder(query.get('sort_order') as ComponentSortOrder);
+    setSelectedIds([]);
+  }, [queryKey]);
+  useEffect(() => {
+    if (!resource.data) return;
+    setComponents(resource.data.data || []);
+    const next = resource.data.pagination;
+    setPagination(next);
+    const lastPage = Math.max(1, Math.ceil(next.total / next.page_size));
+    if (next.page > lastPage) updateQuery({ page: lastPage }, true);
+  }, [resource.data, updateQuery]);
 
   const fetchCategories = async () => {
     try {
@@ -670,15 +311,12 @@ export default function Components() {
     fetchCategories();
     fetchSuppliers();
     fetchComponentOptions();
-    fetchComponents();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSearch = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
     fetchComponents(1, pagination.page_size);
-    if (isMobile) {
-      filterPanelRef.current?.collapse();
-    }
+
   };
 
   const handleClearFilters = () => {
@@ -718,24 +356,6 @@ export default function Components() {
   const handleSearchFilterChange = (key: keyof ComponentSearchFilters, value: string) => {
     setSearchFilters(prev => ({ ...prev, [key]: value }));
   };
-
-  const handleCategorySearchInputChange = (value: string) => {
-    setCategorySearchInput(value);
-    const matched = categories.find(c => c.name.toLowerCase() === value.trim().toLowerCase());
-    setSelectedCategory(matched ? String(matched.id) : '');
-  };
-
-  const filteredManufacturerOptions = manufacturerOptions.filter(option =>
-    option.toLowerCase().includes(searchFilters.manufacturer.toLowerCase())
-  );
-
-  const filteredSupplierOptions = suppliers.filter(s =>
-    s.name.toLowerCase().includes(searchFilters.supplier.toLowerCase())
-  );
-
-  const filteredCategoryOptions = categories.filter(c =>
-    c.name.toLowerCase().includes(categorySearchInput.toLowerCase())
-  );
 
   const renderSearchField = (key: keyof ComponentSearchFilters) => {
     const field = SEARCH_FILTER_FIELDS.find(item => item.key === key);
@@ -809,7 +429,7 @@ export default function Components() {
   };
 
   const handleGenerateNumbers = async () => {
-    if (!confirm('将为所有未编号的元件自动生成编号，是否继续？')) return;
+    if (!await confirm('将为所有未编号的元件自动生成编号，是否继续？')) return;
     setIsGeneratingNumbers(true);
     try {
       const res = await client.patch('/components/generate-numbers');
@@ -904,7 +524,7 @@ export default function Components() {
       case 'component_number':
         return renderCopyableCell(component.component_number, 'font-mono text-xs');
       case 'name':
-        return <td className="p-4 align-middle font-medium">{component.name}</td>;
+        return <td className="p-4 align-middle font-medium"><button className="text-left text-primary hover:underline" onClick={() => setDetailID(component.id)}>{component.name}</button></td>;
       case 'model':
         return renderCopyableCell(component.model);
       case 'manufacturer':
@@ -985,16 +605,9 @@ export default function Components() {
         selectedColumns.map(column => getColumnHeader(column)).join(','),
       );
 
-      const response = await fetch(`/api/v1/components/export?${params.toString()}`, {
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(data?.error || '导出失败');
-      }
-
-      const blob = await response.blob();
-      const disposition = response.headers.get('Content-Disposition');
+      const response = await inventoryApi.exportCSV(params);
+      const blob = response.data;
+      const disposition = response.headers['content-disposition'] as string | undefined;
       let filename = 'components.csv';
       if (disposition) {
         const match = disposition.match(/filename="?([^"]+)"?/);
@@ -1026,10 +639,9 @@ export default function Components() {
   const isAllTableSelected = tableColumnsDraft.length > 0 && tableColumnsDraft.every(column => column.selected);
 
   const isAllSelected = components.length > 0 && selectedIds.length === components.length;
-  const totalPage = pagination.total_page ?? (pagination.total > 0 ? Math.ceil(pagination.total / pagination.page_size) : 0);
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此元件吗？')) return;
+    if (!await confirm('确定删除此元件吗？')) return;
     try {
       await client.delete(`/components/${id}`);
       toast.success('删除成功');
@@ -1041,18 +653,18 @@ export default function Components() {
 
   // Form Handlers
   const openForm = (component?: Component) => {
+    formGuard.reset({ form: component || { stock_quantity: 0 }, category: component?.category?.name || '', supplier: component?.supplier?.name || '', price: '', file: '' });
     parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset();
     setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     setSelectedFile(null);
-    setShowImageMenu(false);
     setIsCopyingComponent(false);
     setPlatformCode('');
     if (component) {
       if (component.id) {
           setEditingComponent(component);
           // 使用时间戳防止缓存
-          setPreviewUrl(`/api/v1/components/${component.id}/image?t=${Date.now()}`);
+          setPreviewUrl(`/api/v1/components/${component.id}/image?t=${component.updated_at || ''}`);
       } else {
           setEditingComponent(null);
           setPreviewUrl('');
@@ -1076,11 +688,10 @@ export default function Components() {
     parseTask.reset(); setSupplierReference(undefined);
     photoDrafts.reset(); setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined);
     setSelectedFile(null);
-    setShowImageMenu(false);
     setEditingComponent(null);
     setIsCopyingComponent(true);
     setPlatformCode('');
-    setFormData({
+    const copy = {
       category_id: component.category_id,
       supplier_id: component.supplier_id,
       component_number: '',
@@ -1097,7 +708,9 @@ export default function Components() {
       image_url: component.image_url,
       category: component.category,
       supplier: component.supplier,
-    });
+    };
+    setFormData(copy);
+    formGuard.reset({ form: copy, category: component.category?.name || '', supplier: component.supplier?.name || '', price: '', file: '' });
     setCategoryInput(component.category?.name || '');
     setSupplierInput(component.supplier?.name || '');
     setFormTotalPriceYuan('');
@@ -1112,8 +725,7 @@ export default function Components() {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       setFormData(prev => ({ ...prev, image_url: '' })); // 清除 URL，优先显示本地预览
-      setShowImageMenu(false);
-    }
+      }
   };
 
   const handleCapture = (file: File) => {
@@ -1122,7 +734,6 @@ export default function Components() {
     setPreviewUrl(url);
     setFormData(prev => ({ ...prev, image_url: '' }));
     setIsCameraOpen(false);
-    setShowImageMenu(false);
   };
 
   const currentPhotoDraft = (): PhotoDraft => ({ ...parseSnapshot(), platformCode });
@@ -1130,7 +741,7 @@ export default function Components() {
     parseTask.reset(); setSupplierReference(undefined);
     setFormData(draft.form); setCategoryInput(draft.category); setSupplierInput(draft.supplier);
     setFormTotalPriceYuan(draft.price); setSelectedFile(draft.file); setPreviewUrl(draft.preview);
-    setPlatformCode(draft.platformCode); setShowImageMenu(false);
+    setPlatformCode(draft.platformCode);
   };
   const switchPhotoDraft = (index: number) => loadPhotoDraft(photoDrafts.select(index, currentPhotoDraft()));
   const handleFormSubmit = async () => {
@@ -1209,31 +820,10 @@ export default function Components() {
         }
       }
 
-      const data: Record<string, unknown> = {
-        ...formData,
-        category_id: Number(categoryId),
-        supplier_id: supplierId,
-        supplier: undefined,
-        category: undefined,
-        component_number: formData.component_number?.trim() || undefined,
-        stock_quantity: Number(formData.stock_quantity)
-      };
-
-      const totalPriceCents = yuanToCents(formTotalPriceYuan);
-      if (!editingComponent && Number(formData.stock_quantity) > 0 && totalPriceCents > 0) {
-        data.total_price_cents = totalPriceCents;
-      }
-
-      let savedId = editingComponent?.id;
-
-      if (editingComponent) {
-        await client.put(`/components/${editingComponent.id}`, data);
-        toast.success('更新成功');
-      } else {
-        const res = await client.post('/components', data);
-        savedId = res.data.data.id;
-        toast.success('添加成功');
-      }
+      const data = componentSaveInput(formData, Number(categoryId), supplierId, yuanToCents(formTotalPriceYuan), !editingComponent, editingComponent?.created_at);
+      const response = await inventoryApi.saveComponent(editingComponent?.id, data);
+      const savedId = response.data.data.id;
+      toast.success(editingComponent ? '更新成功' : '添加成功');
 
       // Upload Image if selected
       if (selectedFile && savedId) {
@@ -1297,6 +887,11 @@ export default function Components() {
     } else if (task.result?.component) applyParsedComponent(task.result.component, task.result.quantity);
   });
 
+  useEffect(() => {
+    if (urlParams.get('new') !== '1') return;
+    openForm(); updateQuery({ new: '' }, true);
+  }, [urlParams, updateQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Stock Handlers
   const openStock = (component: Component) => {
     setEditingComponent(component);
@@ -1313,19 +908,19 @@ export default function Components() {
     setIsBackfillOpen(true);
   };
 
-  const handleBackfillSubmit = async () => {
+  const handleBackfillSubmit = () => backfillMutation.run(async () => {
     if (!backfillTarget) return;
     const totalPriceCents = yuanToCents(backfillForm.totalPriceYuan);
     if (totalPriceCents <= 0) {
       toast.error('请输入采购总价');
       return;
     }
-    if (backfillForm.quantity <= 0) {
+    if (!Number.isSafeInteger(backfillForm.quantity) || backfillForm.quantity <= 0) {
       toast.error('采购数量必须大于 0');
       return;
     }
     try {
-      await client.post(`/components/${backfillTarget.id}/backfill-price`, {
+      await inventoryApi.backfillPrice(backfillTarget.id, {
         total_price_cents: totalPriceCents,
         quantity: backfillForm.quantity,
       });
@@ -1336,9 +931,11 @@ export default function Components() {
       const err = error as { response?: { data?: { error?: string } } };
       toast.error(err.response?.data?.error || '补录失败');
     }
-  };
+  });
 
-  const handleStockSubmit = async () => {
+  const handleStockSubmit = () => stockMutation.run(async () => {
+    if (!Number.isSafeInteger(stockForm.amount) || stockForm.amount <= 0) { toast.error('请输入正整数数量'); return; }
+    if (stockForm.type === 'out' && stockForm.amount > (editingComponent?.stock_quantity || 0)) { toast.error('出库数量不能超过当前库存'); return; }
     if (!editingComponent) return;
     try {
       const amount = stockForm.type === 'in' ? stockForm.amount : -stockForm.amount;
@@ -1352,50 +949,16 @@ export default function Components() {
           payload.total_price_cents = totalPriceCents;
         }
       }
-      await client.post(`/components/${editingComponent.id}/stock`, payload);
+      await inventoryApi.changeStock(editingComponent.id, payload);
       toast.success('库存更新成功');
       setIsStockOpen(false);
       fetchComponents(pagination.page, pagination.page_size);
     } catch {
       toast.error('更新失败');
     }
-  };
+  });
 
-  // Logs Handlers
-  const openLogs = async (component: Component) => {
-    setEditingComponent(component);
-    setIsLogsOpen(true);
-    try {
-      const res = await client.get(`/components/${component.id}/logs`);
-      setComponentLogs(res.data.data || []);
-    } catch {
-      toast.error('加载记录失败');
-    }
-  };
-
-  const handleRevokeLog = async (log: StockLog) => {
-    if (!confirm('确定撤销此记录？库存将回滚。')) return;
-    setRevokingLogId(log.id);
-    try {
-      await client.post(`/stock-logs/${log.id}/revoke`);
-      toast.success('撤销成功');
-      if (editingComponent) {
-        const [logsRes, compRes] = await Promise.all([
-          client.get(`/components/${editingComponent.id}/logs`),
-          client.get(`/components/${editingComponent.id}`),
-        ]);
-        setComponentLogs(logsRes.data.data || []);
-        const updated = compRes.data.data as Component;
-        setEditingComponent(updated);
-        setComponents(prev => prev.map(c => (c.id === updated.id ? updated : c)));
-      }
-    } catch (error) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || '撤销失败');
-    } finally {
-      setRevokingLogId(null);
-    }
-  };
+  const openLogs = (component: Component) => { setEditingComponent(component); setIsLogsOpen(true); };
 
   // QR Handlers
   const handleScan = async (data: string) => {
@@ -1449,172 +1012,24 @@ export default function Components() {
         }
       />
 
-      <CollapsibleFilterPanel
-        ref={filterPanelRef}
-        activeCount={activeFilterCount}
-        showClear={hasActiveFilters}
-        onClear={handleClearFilters}
-        headerActions={
-          <Button size="sm" variant="secondary" onClick={handleSearch}>
-            <Search className="h-4 w-4 mr-1" />
-            搜索
-          </Button>
-        }
-      >
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-          {renderSearchField('component_number')}
-          {renderSearchField('name')}
-          {renderSearchField('model')}
-          <div className="space-y-1">
-            <Label htmlFor="search-manufacturer" className="text-xs text-muted-foreground">制造商</Label>
-            <div className="relative">
-              <Input
-                id="search-manufacturer"
-                placeholder="YAGEO"
-                value={searchFilters.manufacturer}
-                onChange={e => handleSearchFilterChange('manufacturer', e.target.value)}
-                onFocus={() => setShowSearchManufacturerDropdown(true)}
-                onBlur={() => setTimeout(() => setShowSearchManufacturerDropdown(false), 200)}
-                onKeyDown={handleSearchKeyDown}
-              />
-              {showSearchManufacturerDropdown && (
-                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                  {filteredManufacturerOptions.map(option => (
-                    <div
-                      key={option}
-                      className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                      onClick={() => {
-                        handleSearchFilterChange('manufacturer', option);
-                        setShowSearchManufacturerDropdown(false);
-                      }}
-                    >
-                      {option}
-                    </div>
-                  ))}
-                  {filteredManufacturerOptions.length === 0 && (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      {searchFilters.manufacturer ? '无匹配制造商' : '无历史制造商'}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          {renderSearchField('value')}
-          <div className="space-y-1">
-            <Label htmlFor="search-supplier" className="text-xs text-muted-foreground">供应商</Label>
-            <div className="relative">
-              <Input
-                id="search-supplier"
-                placeholder="嘉立创"
-                value={searchFilters.supplier}
-                onChange={e => handleSearchFilterChange('supplier', e.target.value)}
-                onFocus={() => setShowSearchSupplierDropdown(true)}
-                onBlur={() => setTimeout(() => setShowSearchSupplierDropdown(false), 200)}
-                onKeyDown={handleSearchKeyDown}
-              />
-              {showSearchSupplierDropdown && (
-                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                  {filteredSupplierOptions.map(s => (
-                    <div
-                      key={s.id}
-                      className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                      onClick={() => {
-                        handleSearchFilterChange('supplier', s.name);
-                        setShowSearchSupplierDropdown(false);
-                      }}
-                    >
-                      {s.name}
-                    </div>
-                  ))}
-                  {filteredSupplierOptions.length === 0 && (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      {searchFilters.supplier ? '无匹配供应商' : '无供应商'}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          {renderSearchField('supplier_part_number')}
-          <div className="space-y-1">
-            <Label htmlFor="search-category" className="text-xs text-muted-foreground">分类</Label>
-            <div className="relative">
-              <Input
-                id="search-category"
-                placeholder="输入或选择分类"
-                value={categorySearchInput}
-                onChange={e => handleCategorySearchInputChange(e.target.value)}
-                onFocus={() => setShowSearchCategoryDropdown(true)}
-                onBlur={() => setTimeout(() => setShowSearchCategoryDropdown(false), 200)}
-                onKeyDown={handleSearchKeyDown}
-              />
-              {showSearchCategoryDropdown && (
-                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                  {filteredCategoryOptions.map(c => (
-                    <div
-                      key={c.id}
-                      className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                      onClick={() => {
-                        setCategorySearchInput(c.name);
-                        setSelectedCategory(String(c.id));
-                        setShowSearchCategoryDropdown(false);
-                        setTimeout(() => handleSearch(), 0);
-                      }}
-                    >
-                      {c.name}
-                    </div>
-                  ))}
-                  {filteredCategoryOptions.length === 0 && (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      {categorySearchInput ? '无匹配分类' : '无分类'}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-            <div className="space-y-1">
-              <Label htmlFor="sort-by" className="text-xs text-muted-foreground">排序字段</Label>
-              <select
-                id="sort-by"
-                value={sortBy}
-                onChange={e => handleSortByChange(e.target.value as ExportColumnKey)}
-                className="h-9 w-full sm:w-40 rounded-md border border-input bg-background px-2 text-sm"
-              >
-                {EXPORT_COLUMNS.map(column => (
-                  <option key={column.key} value={column.key}>
-                    {column.defaultHeader}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="sort-order" className="text-xs text-muted-foreground">排序方向</Label>
-              <select
-                id="sort-order"
-                value={sortOrder}
-                onChange={e => handleSortOrderChange(e.target.value as ComponentSortOrder)}
-                className="h-9 w-full sm:w-28 rounded-md border border-input bg-background px-2 text-sm"
-              >
-                <option value="asc">升序</option>
-                <option value="desc">降序</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex gap-2 sm:ml-auto">
-            <Button onClick={handleSearch} variant="secondary">
-              <Search className="h-4 w-4 mr-2" />搜索
-            </Button>
-            {hasActiveFilters && (
-              <Button onClick={handleClearFilters} variant="outline">清空筛选</Button>
-            )}
-          </div>
-        </div>
-      </CollapsibleFilterPanel>
+      <section className="surface space-y-4 p-4" aria-label="搜索与筛选">
+        <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); handleSearch(); }}>
+          <div className="relative min-w-48 flex-1"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input aria-label="搜索元件" placeholder="搜索名称、编号、型号、料号…" value={searchFilters.keyword} onChange={e => handleSearchFilterChange('keyword', e.target.value)} className="pl-9" /></div>
+          <div className="w-40"><SearchSelect label="分类筛选" placeholder="全部分类" value={selectedCategory} options={categories.map(c => ({ value: String(c.id), label: c.name }))} onChange={value => { setSelectedCategory(value); setCategorySearchInput(''); void fetchComponents(1, pagination.page_size, searchFilters, '', value); }} /></div>
+          <Button type="submit"><Search className="mr-2 size-4" />搜索</Button><Button variant="outline" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><SlidersHorizontal className="mr-2 size-4" />高级筛选{activeFilterCount > 0 && ` (${activeFilterCount})`}</Button>
+        </form>
+        {advanced && <div className="space-y-4 border-t pt-4"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {SEARCH_FILTER_FIELDS.map(field => renderSearchField(field.key))}
+          <div className="space-y-1"><Label className="text-xs text-muted-foreground">制造商</Label><SearchSelect creatable label="制造商筛选" value={searchFilters.manufacturer} options={manufacturerOptions.map(value => ({ value, label: value }))} onChange={value => handleSearchFilterChange('manufacturer', value)} /></div>
+          <div className="space-y-1"><Label className="text-xs text-muted-foreground">供应商</Label><SearchSelect creatable label="供应商筛选" value={searchFilters.supplier} options={suppliers.map(s => ({ value: s.name, label: s.name }))} onChange={value => handleSearchFilterChange('supplier', value)} /></div>
+        </div><Button size="sm" onClick={handleSearch}>应用条件</Button></div>}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3"><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>已应用条件</span>
+          {SEARCH_PARAM_KEYS.filter(key => query.get(key)).map(key => <button key={key} className="flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-foreground" onClick={() => updateQuery({ [key]: '', page: 1 })}>{key === 'keyword' ? '关键词' : SEARCH_FILTER_FIELDS.find(field => field.key === key)?.label || (key === 'manufacturer' ? '制造商' : '供应商')}：{query.get(key)}<X className="size-3" /></button>)}
+          {query.get('category_id') && <button className="flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-foreground" onClick={() => updateQuery({ category_id: '', page: 1 })}>分类：{categories.find(c => String(c.id) === query.get('category_id'))?.name || query.get('category_id')}<X className="size-3" /></button>}
+          {activeFilterCount > 0 ? <button className="text-primary" onClick={handleClearFilters}>清空筛选</button> : <span>全部元件</span>}
+        </div><div className="flex items-center gap-2 text-xs text-muted-foreground"><label htmlFor="sort-by">排序</label><select id="sort-by" className="h-8 max-w-32 py-0 text-xs" value={sortBy} onChange={e => handleSortByChange(e.target.value as ExportColumnKey)}>{EXPORT_COLUMNS.map(column => <option key={column.key} value={column.key}>{column.defaultHeader}</option>)}</select><select aria-label="排序方向" className="h-8 py-0 text-xs" value={sortOrder} onChange={e => handleSortOrderChange(e.target.value as ComponentSortOrder)}><option value="desc">降序</option><option value="asc">升序</option></select></div></div>
+      </section>
+      {(loading || resource.error || !components.length) && <div className="surface"><PageState loading={loading} error={resource.error} empty={!components.length} filtered={hasActiveFilters} onRetry={resource.refresh} onClear={handleClearFilters} /></div>}
 
       {selectedIds.length > 0 && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-md border bg-muted/30 px-4 py-3">
@@ -1629,7 +1044,7 @@ export default function Components() {
         </div>
       )}
 
-      <div className="rounded-md border">
+      <div className={cn('surface hidden md:block', (loading || !!resource.error || !components.length) && 'md:hidden')}>
         <div className="w-full overflow-auto">
           <table className="w-full caption-bottom text-sm text-left">
             <thead className="[&_tr]:border-b">
@@ -1660,8 +1075,7 @@ export default function Components() {
                   key={component.id}
                   className={cn(
                     'group border-b transition-colors hover:bg-muted/50',
-                    activeRowId === component.id &&
-                      'relative z-10 [&>td:not(:last-child)]:blur-sm [&>td:not(:last-child)]:opacity-60 [&>td:not(:last-child)]:pointer-events-none [&>td:not(:last-child)]:transition-all [&>td:last-child]:z-20',
+
                   )}
                 >
                   <td className="p-4 align-middle">
@@ -1674,22 +1088,9 @@ export default function Components() {
                     />
                   </td>
                   <td className="p-4 align-middle">
-                    <div 
-                        className="w-10 h-10 rounded overflow-hidden bg-secondary/20 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity"
-                        onClick={() => setPreviewImage(`/api/v1/components/${component.id}/image`)}
-                    >
-                        <img 
-                            src={`/api/v1/components/${component.id}/image`} 
-                            alt="" 
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                                (e.target as HTMLImageElement).parentElement!.innerText = '📦';
-                            }}
-                        />
-                    </div>
+                    <button aria-label={`预览 ${component.name} 图片`} onClick={() => setPreviewImage(`/api/v1/components/${component.id}/image`)}><SafeImage src={`/api/v1/components/${component.id}/image`} alt={component.name} className="size-10" /></button>
                   </td>
-                  {visibleTableColumns.map(column => renderTableCell(column.key, component))}
+                  {visibleTableColumns.map(column => <Fragment key={column.key}>{renderTableCell(column.key, component)}</Fragment>)}
                   <td className="sticky right-0 z-[5] bg-background/95 p-2 align-middle shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)] backdrop-blur-sm">
                     <RowActionsMenu
                       rowId={component.id}
@@ -1712,38 +1113,17 @@ export default function Components() {
         </div>
       </div>
       
-      {/* Pagination */}
-      <div className="flex flex-col sm:flex-row justify-between gap-3 items-start sm:items-center">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span>共 {pagination.total} 条</span>
-          <div className="flex items-center gap-2">
-            <span>每页</span>
-            <select
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-              value={pagination.page_size}
-              onChange={e => handlePageSizeChange(Number(e.target.value))}
-            >
-              {PAGE_SIZE_OPTIONS.map(size => (
-                <option key={size} value={size}>{size}</option>
-              ))}
-            </select>
-            <span>条</span>
-          </div>
-        </div>
-        <div className="flex gap-2 items-center">
-          <Button 
-            variant="outline" 
-            disabled={pagination.page <= 1} 
-            onClick={() => handlePageChange(pagination.page - 1)}
-          >上一页</Button>
-          <span>第 {pagination.page} / {Math.max(totalPage, 1)} 页</span>
-          <Button 
-            variant="outline" 
-            disabled={totalPage === 0 || pagination.page >= totalPage} 
-            onClick={() => handlePageChange(pagination.page + 1)}
-          >下一页</Button>
-        </div>
-      </div>
+      {!loading && !resource.error && <div className="space-y-3 md:hidden">{components.map(component => <article key={component.id} className="surface p-4"><div className="flex items-start gap-3"><input type="checkbox" aria-label={`选择 ${component.name}`} className="mt-2 size-4" checked={selectedIds.includes(component.id)} onChange={e => toggleSelectOne(component.id, e.target.checked)} /><SafeImage src={`/api/v1/components/${component.id}/image`} alt={component.name} className="size-12 shrink-0" /><div className="min-w-0 flex-1"><button className="text-left font-semibold text-primary" onClick={() => setDetailID(component.id)}>{component.name}</button><p className="mt-1 break-all text-xs text-muted-foreground">{component.component_number} · {component.model || component.value || '未填写型号'}</p></div><RowActionsMenu rowId={component.id} activeRowId={mobileActiveRowId} onActiveRowChange={setMobileActiveRowId}
+                      actions={[
+                        { key: 'edit', icon: Edit, label: '编辑', onClick: () => openForm(component) },
+                        { key: 'stock', icon: Database, label: '库存', onClick: () => openStock(component), iconClassName: 'text-blue-500' },
+                        { key: 'backfill', icon: Coins, label: '补录价格', onClick: () => openBackfill(component), iconClassName: 'text-amber-600' },
+                        { key: 'logs', icon: History, label: '记录', onClick: () => openLogs(component), iconClassName: 'text-gray-500' },
+                        { key: 'copy', icon: Copy, label: '复制', onClick: () => openCopyForm(component), iconClassName: 'text-emerald-600' },
+                        { key: 'delete', icon: Trash2, label: '删除', onClick: () => handleDelete(component.id), destructive: true },
+                      ]} /></div><div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground"><span>{component.category?.name || '未分类'} · {component.location || '未设置位置'}</span><span className="status-badge">库存 {component.stock_quantity}</span></div></article>)}</div>}
+      <PaginationControl pagination={pagination} onPageChange={handlePageChange} onPageSizeChange={handlePageSizeChange} disabled={loading} />
+      <ComponentDetail id={detailID} onClose={() => setDetailID(null)} onEdit={component => { setDetailID(null); openForm(component); }} onStock={component => { setDetailID(null); openStock(component); }} onBackfill={component => { setDetailID(null); openBackfill(component); }} onLogs={component => { setDetailID(null); void openLogs(component); }} />
 
       {/* Batch Location Modal */}
       <Modal
@@ -1768,42 +1148,7 @@ export default function Components() {
           <p className="text-sm text-muted-foreground">将为选中的 {selectedIds.length} 个元件设置相同位置。</p>
           <div className="space-y-2">
             <Label>位置</Label>
-            <div className="relative">
-              <Input
-                value={batchLocation}
-                onChange={e => {
-                  setBatchLocation(e.target.value);
-                  setShowBatchLocationDropdown(true);
-                }}
-                onFocus={() => setShowBatchLocationDropdown(true)}
-                onBlur={() => setTimeout(() => setShowBatchLocationDropdown(false), 200)}
-                placeholder="例如 A1-03"
-                autoFocus
-              />
-              {showBatchLocationDropdown && (
-                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                  {locationOptions
-                    .filter(loc => loc.toLowerCase().includes(batchLocation.toLowerCase()))
-                    .map(loc => (
-                      <div
-                        key={loc}
-                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setBatchLocation(loc);
-                          setShowBatchLocationDropdown(false);
-                        }}
-                      >
-                        {loc}
-                      </div>
-                    ))}
-                  {locationOptions.filter(loc => loc.toLowerCase().includes(batchLocation.toLowerCase())).length === 0 && (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      {batchLocation ? '无匹配位置' : '无历史位置'}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <SearchSelect label="批量存放位置" value={batchLocation} onChange={setBatchLocation} creatable options={locationOptions.map(value => ({ value, label: value }))} placeholder="输入或选择位置" />
           </div>
         </div>
       </Modal>
@@ -1817,404 +1162,32 @@ export default function Components() {
 
       <PhotoParseModal isOpen={isPhotoParseOpen} onClose={() => { setIsPhotoParseOpen(false); setRecoveredPhotoTask(undefined); }} source="components" recordID={editingComponent?.id} initialTask={recoveredPhotoTask} onConfirm={applyPhotoResults} />
 
-      {/* Edit/Add Modal */}
-      <Modal 
-        isOpen={isFormOpen && !isPhotoParseOpen}
-        onClose={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }}
+      <Modal isOpen={isFormOpen && !isPhotoParseOpen} onClose={closeForm} dirty={formGuard.dirty} busy={saving} variant="drawer"
         title={editingComponent ? '编辑元件' : isCopyingComponent ? '复制元件' : '添加元件'}
-        footer={
-          <>
-            <Button variant="outline" onClick={() => { parseTask.reset(); setSupplierReference(undefined); setIsFormOpen(false); }}>取消</Button>
-            <Button onClick={handleFormSubmit} disabled={saving}>保存</Button>
-          </>
-        }
-        className="max-w-2xl"
-      >
-        <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
+        footer={<><span className="mr-auto text-xs text-muted-foreground">{saving ? '正在保存，请稍候…' : '保存后写入本地库存'}</span><Button variant="outline" onClick={() => void cancelForm()} disabled={saving}>取消</Button><Button type="submit" form="inventory-form" disabled={saving}>{saving ? '保存中…' : '保存'}</Button></>}>
+        <div className="space-y-4">
           <PhotoDraftNavigation index={photoDrafts.index} count={photoDrafts.drafts.length} disabled={saving} onSelect={switchPhotoDraft} />
-             {/* Import Tools */}
-             <div className="bg-secondary/20 p-4 rounded-md space-y-4">
-                <Label>{editingComponent ? '根据供应商料号更新' : '快速导入'}</Label>
-                <ParseTaskStatus task={parseTask.task} />
-                <SupplierReference component={matchingSupplierReference(supplierReference, formData.supplier_part_number || '', editingComponent ? formData.supplier_part_number || '' : platformCode)} />
-                <div className="flex gap-2">
-                    <Input
-                      placeholder="输入平台编码 (如 C2040)"
-                      value={editingComponent ? (formData.supplier_part_number || '') : platformCode}
-                      onChange={e => {
-                        if (editingComponent) {
-                          setFormData({ ...formData, supplier_part_number: e.target.value });
-                        } else {
-                          setPlatformCode(e.target.value);
-                        }
-                      }}
-                    />
-                    <Button
-                      onClick={() => parsePlatform(editingComponent ? formData.supplier_part_number : undefined)}
-                      disabled={isImportParsing || !(editingComponent ? formData.supplier_part_number?.trim() : platformCode.trim())}
-                    >
-                      {isImportParsing ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          解析中...
-                        </>
-                      ) : editingComponent ? '更新信息' : '解析'}
-                    </Button>
-                    {!editingComponent && (
-                      <Button variant="outline" onClick={() => setIsScannerOpen(true)} disabled={isImportParsing}>
-                        <QrCode className="mr-2 h-4 w-4" /> 扫码
-                      </Button>
-                    )}
-                    <Button variant="outline" onClick={() => setIsPhotoParseOpen(true)} disabled={isImportParsing}>
-                      <Camera className="mr-2 h-4 w-4" />拍照 AI
-                    </Button>
-                </div>
-                <ParseModeSelect value={parseMode} onChange={setParseMode} />
-             </div>
-
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>分类</Label>
-                    <div className="relative">
-                        <div className="relative">
-                            <Input 
-                                value={categoryInput}
-                                onChange={e => {
-                                    setCategoryInput(e.target.value);
-                                    setShowCategoryDropdown(true);
-                                }}
-                                onFocus={() => setShowCategoryDropdown(true)}
-                                onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
-                                placeholder="输入或选择分类"
-                            />
-                            {showCategoryDropdown && (
-                                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                                    {categories
-                                        .filter(c => c.name.toLowerCase().includes(categoryInput.toLowerCase()))
-                                        .map(c => (
-                                        <div 
-                                            key={c.id}
-                                            className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                                            onClick={() => {
-                                                setCategoryInput(c.name);
-                                                setShowCategoryDropdown(false);
-                                            }}
-                                        >
-                                            {c.name}
-                                        </div>
-                                    ))}
-                                    {categories.filter(c => c.name.toLowerCase().includes(categoryInput.toLowerCase())).length === 0 && (
-                                        <div className="px-3 py-2 text-sm text-muted-foreground">
-                                            {categoryInput ? '按回车创建新分类' : '无匹配分类'}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <Label>元件编号</Label>
-                    <Input
-                      value={formData.component_number || ''}
-                      onChange={e => setFormData({ ...formData, component_number: e.target.value })}
-                      placeholder="留空则保存时自动生成，例如 HB-000001"
-                    />
-                </div>
-                <div className="space-y-2">
-                    <Label>名称</Label>
-                    <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                    <Label>厂家型号</Label>
-                    <Input value={formData.model || ''} onChange={e => setFormData({...formData, model: e.target.value})} placeholder="例如 RC0603FR-0710KL" />
-                </div>
-                <div className="space-y-2">
-                    <Label>制造商</Label>
-                    <Input value={formData.manufacturer || ''} onChange={e => setFormData({...formData, manufacturer: e.target.value})} placeholder="例如 YAGEO" />
-                </div>
-                <div className="space-y-2">
-                    <Label>参数值</Label>
-                    <Input value={formData.value || ''} onChange={e => setFormData({...formData, value: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                    <Label>封装</Label>
-                    <div className="relative">
-                        <Input
-                            value={formData.package || ''}
-                            onChange={e => {
-                                setFormData({ ...formData, package: e.target.value });
-                                setShowPackageDropdown(true);
-                            }}
-                            onFocus={() => setShowPackageDropdown(true)}
-                            onBlur={() => setTimeout(() => setShowPackageDropdown(false), 200)}
-                            placeholder="例如 0603"
-                        />
-                        {showPackageDropdown && (
-                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                                {packageOptions
-                                    .filter(pkg => pkg.toLowerCase().includes((formData.package || '').toLowerCase()))
-                                    .map(pkg => (
-                                    <div
-                                        key={pkg}
-                                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                                        onClick={() => {
-                                            setFormData({ ...formData, package: pkg });
-                                            setShowPackageDropdown(false);
-                                        }}
-                                    >
-                                        {pkg}
-                                    </div>
-                                ))}
-                                {packageOptions.filter(pkg => pkg.toLowerCase().includes((formData.package || '').toLowerCase())).length === 0 && (
-                                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                                        {(formData.package || '') ? '无匹配封装' : '无历史封装'}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <Label>供应商</Label>
-                    <div className="relative">
-                        <Input 
-                            value={supplierInput}
-                            onChange={e => {
-                                setSupplierInput(e.target.value);
-                                setShowSupplierDropdown(true);
-                            }}
-                            onFocus={() => setShowSupplierDropdown(true)}
-                            onBlur={() => setTimeout(() => setShowSupplierDropdown(false), 200)}
-                            placeholder="例如 嘉立创"
-                        />
-                        {showSupplierDropdown && (
-                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                                {suppliers
-                                    .filter(s => s.name.toLowerCase().includes(supplierInput.toLowerCase()))
-                                    .map(s => (
-                                    <div 
-                                        key={s.id}
-                                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                                        onClick={() => {
-                                            setSupplierInput(s.name);
-                                            setShowSupplierDropdown(false);
-                                        }}
-                                    >
-                                        {s.name}
-                                    </div>
-                                ))}
-                                {suppliers.filter(s => s.name.toLowerCase().includes(supplierInput.toLowerCase())).length === 0 && (
-                                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                                        {supplierInput ? '保存时创建新供应商' : '无匹配供应商'}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <Label>供应商料号</Label>
-                    <Input value={formData.supplier_part_number || ''} onChange={e => setFormData({...formData, supplier_part_number: e.target.value})} placeholder="例如 C2040" />
-                </div>
-                <div className="space-y-2">
-                    <Label>库存数量</Label>
-                    <div className="flex items-center space-x-2">
-                        <Button 
-                            variant="outline" 
-                            size="icon" 
-                            className="h-10 w-10 shrink-0"
-                            onClick={() => setFormData(prev => ({...prev, stock_quantity: Math.max(0, (prev.stock_quantity || 0) - 1)}))}
-                        >
-                            <Minus className="h-4 w-4" />
-                        </Button>
-                        <Input 
-                            type="number" 
-                            value={formData.stock_quantity ?? ''}
-                            onChange={e => setFormData({...formData, stock_quantity: e.target.value === '' ? undefined : Number(e.target.value)})}
-                            className="text-center"
-                        />
-                         <Button 
-                            variant="outline" 
-                            size="icon" 
-                            className="h-10 w-10 shrink-0"
-                            onClick={() => setFormData(prev => ({...prev, stock_quantity: (prev.stock_quantity || 0) + 1}))}
-                        >
-                            <Plus className="h-4 w-4" />
-                        </Button>
-                    </div>
-                    <QuantityShortcuts
-                        value={formData.stock_quantity}
-                        onSelect={quantity => setFormData(prev => ({ ...prev, stock_quantity: quantity }))}
-                    />
-                </div>
-                {!editingComponent && (
-                  <div className="space-y-2">
-                    <Label>采购总价（元）</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={formTotalPriceYuan}
-                      onChange={e => setFormTotalPriceYuan(e.target.value)}
-                      placeholder="可选，按库存数量分摊单价"
-                    />
-                    {(formData.stock_quantity || 0) > 0 && formTotalPriceYuan && yuanToCents(formTotalPriceYuan) > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        分摊单价：{formatMicro(calcUnitPriceMicro(yuanToCents(formTotalPriceYuan), formData.stock_quantity || 0))}
-                      </p>
-                    )}
-                  </div>
-                )}
-                {editingComponent && (editingComponent.unit_price_micro ?? 0) > 0 && (
-                  <div className="space-y-2">
-                    <Label>参考单价</Label>
-                    <p className="text-sm text-muted-foreground">{formatMicro(editingComponent.unit_price_micro)}</p>
-                  </div>
-                )}
-                <div className="space-y-2">
-                    <Label>位置</Label>
-                    <div className="relative">
-                        <Input
-                            value={formData.location || ''}
-                            onChange={e => {
-                                setFormData({ ...formData, location: e.target.value });
-                                setShowLocationDropdown(true);
-                            }}
-                            onFocus={() => setShowLocationDropdown(true)}
-                            onBlur={() => setTimeout(() => setShowLocationDropdown(false), 200)}
-                            placeholder="例如 A1-03"
-                        />
-                        {showLocationDropdown && (
-                            <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-auto">
-                                {locationOptions
-                                    .filter(loc => loc.toLowerCase().includes((formData.location || '').toLowerCase()))
-                                    .map(loc => (
-                                    <div
-                                        key={loc}
-                                        className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                                        onClick={() => {
-                                            setFormData({ ...formData, location: loc });
-                                            setShowLocationDropdown(false);
-                                        }}
-                                    >
-                                        {loc}
-                                    </div>
-                                ))}
-                                {locationOptions.filter(loc => loc.toLowerCase().includes((formData.location || '').toLowerCase())).length === 0 && (
-                                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                                        {(formData.location || '') ? '无匹配位置' : '无历史位置'}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-            <div className="space-y-2">
-                <Label>描述</Label>
-                <textarea 
-                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={formData.description || ''}
-                    onChange={e => setFormData({...formData, description: e.target.value})}
-                />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>图片</Label>
-                    <div className="relative">
-                        <div 
-                            className="w-full h-48 bg-secondary/20 rounded-md border flex items-center justify-center overflow-hidden relative cursor-pointer group hover:bg-secondary/30 transition-colors"
-                            onClick={() => setShowImageMenu(true)}
-                        >
-                            {previewUrl || formData.image_url ? (
-                                <img 
-                                    src={previewUrl || formData.image_url} 
-                                    alt="Preview" 
-                                    className="w-full h-full object-contain" 
-                                    onError={(e) => {
-                                         // 错误处理：如果是本地预览URL失效或后端404，显示占位
-                                         // 为避免死循环，仅隐藏并显示父容器的备选内容（如果有的话，但这里父容器被img占满了）
-                                         // 简单的做法是隐藏 img，显示一个 fallback div
-                                         const target = e.target as HTMLImageElement;
-                                         target.style.display = 'none';
-                                         // 这里我们依赖 react 重新渲染或者简单的 DOM 操作显示 fallback
-                                         // 我们可以通过 state 控制，但为了简单，直接操作 DOM 添加一个兄弟元素显示
-                                         const parent = target.parentElement;
-                                         if (parent) {
-                                             const fallback = document.createElement('div');
-                                             fallback.className = "flex flex-col items-center text-muted-foreground absolute inset-0 justify-center";
-                                             fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg><span>点击上传/拍摄图片</span>';
-                                             parent.appendChild(fallback);
-                                         }
-                                    }}
-                                />
-                            ) : (
-                                <div className="flex flex-col items-center text-muted-foreground">
-                                    <Camera className="h-8 w-8 mb-2" />
-                                    <span>点击上传/拍摄图片</span>
-                                </div>
-                            )}
-                            
-                            {/* 隐藏的文件输入 */}
-                            <input 
-                                type="file" 
-                                ref={fileInputRef} 
-                                className="hidden" 
-                                accept="image/*" 
-                                onChange={handleFileSelect} 
-                            />
-
-                            {/* 菜单遮罩 */}
-                            {showImageMenu && (
-                                <div 
-                                    className="absolute inset-0 bg-background/95 z-10 flex flex-col items-center justify-center gap-2 p-8 animate-in fade-in duration-200" 
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <Button onClick={() => { fileInputRef.current?.click(); setShowImageMenu(false); }} className="w-full">
-                                        <Upload className="mr-2 h-4 w-4" /> 上传图片
-                                    </Button>
-                                    <Button onClick={() => setIsCameraOpen(true)} className="w-full">
-                                        <Camera className="mr-2 h-4 w-4" /> 拍摄图片
-                                    </Button>
-                                    <Button variant="ghost" onClick={() => setShowImageMenu(false)} className="w-full text-destructive">
-                                        取消
-                                    </Button>
-                                </div>
-                            )}
-                        </div>
-                        
-                        <div className="mt-2 space-y-2">
-                            <Label>图片 URL</Label>
-                            <Input 
-                                value={formData.image_url || ''} 
-                                onChange={e => {
-                                    setFormData({...formData, image_url: e.target.value});
-                                    setPreviewUrl('');
-                                    setSelectedFile(null);
-                                }} 
-                                placeholder="输入图片 URL" 
-                            />
-                        </div>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <Label>数据手册 URL</Label>
-                    <Input value={formData.datasheet_url || ''} onChange={e => setFormData({...formData, datasheet_url: e.target.value})} placeholder="http://..." />
-                </div>
-            </div>
+          <SmartEntry code={editingComponent ? formData.supplier_part_number || '' : platformCode} onCodeChange={value => editingComponent ? setFormData(prev => ({ ...prev, supplier_part_number: value })) : setPlatformCode(value)} onParse={() => void parsePlatform(editingComponent ? formData.supplier_part_number : undefined)} onScan={() => setIsScannerOpen(true)} onPhoto={() => setIsPhotoParseOpen(true)} busy={isImportParsing} mode={parseMode} onModeChange={setParseMode} task={parseTask.task} reference={matchingSupplierReference(supplierReference, formData.supplier_part_number || '', editingComponent ? formData.supplier_part_number || '' : platformCode)} />
+          <InventoryFields value={{ ...formData, quantity: formData.stock_quantity, category: categoryInput, supplier: supplierInput, totalPrice: formTotalPriceYuan }} onChange={patch => {
+            const { quantity, category, supplier, totalPrice, ...fields } = patch;
+            if ('quantity' in patch) setFormData(prev => ({ ...prev, stock_quantity: quantity ?? undefined }));
+            if (category !== undefined) setCategoryInput(category); if (supplier !== undefined) setSupplierInput(supplier); if (totalPrice !== undefined) setFormTotalPriceYuan(totalPrice);
+            setFormData(prev => ({ ...prev, ...fields }));
+            if ('image_url' in fields) { setPreviewUrl(''); setSelectedFile(null); }
+          }} onSubmit={() => void handleFormSubmit()} categories={categories.map(c => c.name)} suppliers={suppliers.map(s => s.name)} manufacturers={manufacturerOptions} packages={packageOptions} locations={locationOptions} editing={!!editingComponent} busy={saving} imagePreview={previewUrl}
+            imageControls={<div className="flex flex-wrap gap-2"><input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileSelect} /><Button variant="outline" onClick={() => fileInputRef.current?.click()}><Upload className="mr-2 size-4" />上传图片</Button><Button variant="outline" onClick={() => setIsCameraOpen(true)}><Camera className="mr-2 size-4" />拍摄图片</Button></div>} />
         </div>
       </Modal>
 
       {/* Backfill Price Modal */}
       <Modal
         isOpen={isBackfillOpen}
-        onClose={() => setIsBackfillOpen(false)}
+        onClose={() => setIsBackfillOpen(false)} busy={backfillMutation.busy}
         title={backfillTarget ? `补录价格 · ${backfillTarget.name}` : '补录价格'}
         footer={
           <>
             <Button variant="outline" onClick={() => setIsBackfillOpen(false)}>取消</Button>
-            <Button onClick={handleBackfillSubmit}>确认</Button>
+            <Button onClick={handleBackfillSubmit} disabled={backfillMutation.busy}>确认</Button>
           </>
         }
       >
@@ -2278,11 +1251,12 @@ export default function Components() {
       {/* Stock Modal */}
       <Modal
         isOpen={isStockOpen}
-        onClose={() => setIsStockOpen(false)}
+        onClose={() => setIsStockOpen(false)} busy={stockMutation.busy}
         title="库存变更"
-        footer={<><Button variant="outline" onClick={() => setIsStockOpen(false)}>取消</Button><Button onClick={handleStockSubmit}>确认</Button></>}
+        footer={<><Button variant="outline" onClick={() => setIsStockOpen(false)}>取消</Button><Button onClick={handleStockSubmit} disabled={stockMutation.busy}>{stockMutation.busy ? '提交中…' : '确认'}</Button></>}
       >
         <div className="space-y-4 py-4">
+          <div className="rounded-lg bg-muted p-4"><p className="font-medium">{editingComponent?.name}</p><div className="mt-3 flex items-center justify-between text-sm"><span>当前库存 <strong>{editingComponent?.stock_quantity ?? 0}</strong></span><span>→</span><span>变更后 <strong className={(editingComponent?.stock_quantity || 0) + (stockForm.type === 'in' ? stockForm.amount : -stockForm.amount) < 0 ? 'text-destructive' : 'text-primary'}>{(editingComponent?.stock_quantity || 0) + (stockForm.type === 'in' ? stockForm.amount : -stockForm.amount)}</strong></span></div></div>
             <div className="flex gap-4">
                 <Button 
                     variant={stockForm.type === 'in' ? 'default' : 'outline'} 
@@ -2358,59 +1332,7 @@ export default function Components() {
         </div>
       </Modal>
 
-      {/* Logs Modal */}
-      <Modal isOpen={isLogsOpen} onClose={() => setIsLogsOpen(false)} title="库存记录">
-         <div className="max-h-[60vh] overflow-auto space-y-4">
-            {componentLogs.length === 0 ? <div className="text-center text-muted-foreground py-8">暂无记录</div> : 
-             componentLogs.map(log => (
-                 <div key={log.id} className={`flex justify-between items-center p-3 rounded-lg bg-secondary/10 gap-3 ${stockLogCardClass(log)}`}>
-                     <div className="flex items-center gap-3 min-w-0">
-                         <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${stockLogIconClass(log)}`}>
-                             {stockLogIconLabel(log)}
-                         </div>
-                         <div className="min-w-0">
-                             <div className="flex items-center gap-2 flex-wrap">
-                               <span className="font-medium">{isBackfillLog(log) ? '补录' : Math.abs(log.change_amount)}</span>
-                               {isRevoked(log) && (
-                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">已撤销</span>
-                               )}
-                               {isReversal(log) && (
-                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">撤销冲销</span>
-                               )}
-                             </div>
-                             <div className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</div>
-                         </div>
-                     </div>
-                     <div className="text-sm text-right shrink-0">
-                       <div className={`font-medium ${stockLogAmountClass(log)}`}>
-                         {formatStockLogChangeAmount(log)}
-                       </div>
-                       {(log.total_price_cents ?? 0) > 0 && (
-                         <div className="text-foreground">
-                           {log.change_amount < 0 ? '成本' : '总价'} {formatCents(log.total_price_cents)}
-                           {(log.unit_price_micro ?? 0) > 0 && (
-                             <span className="text-muted-foreground"> · 单价 {formatMicro(log.unit_price_micro)}</span>
-                           )}
-                         </div>
-                       )}
-                       <div className="text-muted-foreground">{log.reason || '无备注'}</div>
-                       {canRevoke(log) && (
-                         <Button
-                           variant="outline"
-                           size="sm"
-                           className="mt-2"
-                           disabled={revokingLogId === log.id}
-                           onClick={() => void handleRevokeLog(log)}
-                         >
-                           撤销
-                         </Button>
-                       )}
-                     </div>
-                 </div>
-             ))
-            }
-         </div>
-      </Modal>
+      {isLogsOpen && editingComponent && <ComponentLogsDialog key={editingComponent.id} id={editingComponent.id} onClose={() => setIsLogsOpen(false)} onUpdated={() => void fetchComponents(pagination.page, pagination.page_size)} />}
 
       {/* Column Settings Modal */}
       <Modal
@@ -2534,11 +1456,7 @@ export default function Components() {
       >
         <div className="flex justify-center items-center bg-black/5 rounded-md overflow-hidden min-h-[200px]">
             {previewImage && (
-                <img 
-                    src={previewImage} 
-                    alt="Preview" 
-                    className="max-w-full max-h-[80vh] object-contain" 
-                />
+                <SafeImage src={previewImage} alt="图片预览" className="max-h-[70vh] w-full object-contain" />
             )}
         </div>
       </Modal>

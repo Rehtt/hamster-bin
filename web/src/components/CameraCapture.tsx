@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, RefreshCw, X } from 'lucide-react';
 import { Button } from './ui/Button';
-import { toast } from 'react-hot-toast';
 
 interface CameraCaptureProps {
   onCapture: (file: File) => void;
@@ -11,6 +10,8 @@ interface CameraCaptureProps {
 export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
 
@@ -20,6 +21,7 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
 
     const openCamera = async () => {
       try {
+        setError('');
         const newStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: facingMode }
         });
@@ -36,8 +38,7 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
         }
       } catch (error) {
         console.error(error);
-        toast.error('无法访问摄像头');
-        onClose();
+        if (active) setError('无法访问摄像头。请允许浏览器使用摄像头，或返回选择照片上传。');
       }
     };
 
@@ -47,7 +48,7 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
       active = false;
       currentStream?.getTracks().forEach(track => track.stop());
     };
-  }, [facingMode, onClose]);
+  }, [facingMode, attempt]);
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
@@ -87,6 +88,7 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
 
   return (
     <div className="flex flex-col items-center gap-4 p-4 bg-background h-full">
+      {error && <div role="alert" className="w-full space-y-3 rounded-lg bg-destructive/5 p-4 text-sm"><p className="text-destructive">{error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重试摄像头</Button></div>}
       <div className="relative w-full max-w-md aspect-[3/4] bg-black rounded-lg overflow-hidden">
         <video 
           ref={videoRef} 
@@ -104,6 +106,7 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
         <Button 
             size="icon" 
             className="h-16 w-16 rounded-full border-4 border-background ring-2 ring-primary" 
+            disabled={!!error || !stream}
             onClick={handleCapture}
             title="拍摄"
         >
