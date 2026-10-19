@@ -1007,13 +1007,13 @@ export default function Components() {
       <section className="surface space-y-4 p-4" aria-label="搜索与筛选">
         <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); handleSearch(); }}>
           <div className="relative min-w-48 flex-1"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input aria-label="搜索元件" placeholder="搜索名称、编号、型号、料号…" value={searchFilters.keyword} onChange={e => handleSearchFilterChange('keyword', e.target.value)} className="pl-9" /></div>
-          <div className="w-40"><SearchSelect label="分类筛选" placeholder="全部分类" value={selectedCategory} options={categories.map(c => ({ value: String(c.id), label: c.name }))} onChange={value => { setSelectedCategory(value); setCategorySearchInput(''); void fetchComponents(1, pagination.page_size, searchFilters, '', value); }} /></div>
+          <div className="w-40"><SearchSelect source="categories" label="分类筛选" placeholder="全部分类" value={selectedCategory} options={categories.map(c => ({ value: String(c.id), label: c.name }))} onChange={value => { setSelectedCategory(value); setCategorySearchInput(''); void fetchComponents(1, pagination.page_size, searchFilters, '', value); }} /></div>
           <Button type="submit"><Search className="mr-2 size-4" />搜索</Button><Button variant="outline" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><SlidersHorizontal className="mr-2 size-4" />高级筛选{activeFilterCount > 0 && ` (${activeFilterCount})`}</Button>
         </form>
         {advanced && <div className="space-y-4 border-t pt-4"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {SEARCH_FILTER_FIELDS.map(field => renderSearchField(field.key))}
-          <div className="space-y-1"><Label className="text-xs text-muted-foreground">制造商</Label><SearchSelect creatable label="制造商筛选" value={searchFilters.manufacturer} options={manufacturerOptions.map(value => ({ value, label: value }))} onChange={value => handleSearchFilterChange('manufacturer', value)} /></div>
-          <div className="space-y-1"><Label className="text-xs text-muted-foreground">供应商</Label><SearchSelect creatable label="供应商筛选" value={searchFilters.supplier} options={suppliers.map(s => ({ value: s.name, label: s.name }))} onChange={value => handleSearchFilterChange('supplier', value)} /></div>
+          <div className="space-y-1"><Label className="text-xs text-muted-foreground">制造商</Label><SearchSelect creatable source="manufacturers" label="制造商筛选" value={searchFilters.manufacturer} options={manufacturerOptions.map(value => ({ value, label: value }))} onChange={value => handleSearchFilterChange('manufacturer', value)} /></div>
+          <div className="space-y-1"><Label className="text-xs text-muted-foreground">供应商</Label><SearchSelect creatable source="suppliers" label="供应商筛选" value={searchFilters.supplier} options={suppliers.map(s => ({ value: s.name, label: s.name }))} onChange={value => handleSearchFilterChange('supplier', value)} /></div>
         </div><Button size="sm" onClick={handleSearch}>应用条件</Button></div>}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3"><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>已应用条件</span>
           {SEARCH_PARAM_KEYS.filter(key => query.get(key)).map(key => <button key={key} className="flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-foreground" onClick={() => updateQuery({ [key]: '', page: 1 })}>{key === 'keyword' ? '关键词' : SEARCH_FILTER_FIELDS.find(field => field.key === key)?.label || (key === 'manufacturer' ? '制造商' : '供应商')}：{query.get(key)}<X className="size-3" /></button>)}
@@ -1140,7 +1140,7 @@ export default function Components() {
           <p className="text-sm text-muted-foreground">将为选中的 {selectedIds.length} 个元件设置相同位置。</p>
           <div className="space-y-2">
             <Label>位置</Label>
-            <SearchSelect label="批量存放位置" value={batchLocation} onChange={setBatchLocation} creatable options={locationOptions.map(value => ({ value, label: value }))} placeholder="输入或选择位置" />
+            <SearchSelect source="locations" label="批量存放位置" value={batchLocation} onChange={setBatchLocation} creatable options={locationOptions.map(value => ({ value, label: value }))} placeholder="输入或选择位置" />
           </div>
         </div>
       </Modal>

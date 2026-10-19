@@ -16,9 +16,13 @@ func NewSupplierRepository(db *gorm.DB) *SupplierRepository {
 }
 
 // GetAll 获取所有供应商
-func (r *SupplierRepository) GetAll() ([]models.Supplier, error) {
-	var suppliers []models.Supplier
-	err := r.db.Order("name ASC").Find(&suppliers).Error
+func (r *SupplierRepository) GetAll(keyword ...string) ([]models.Supplier, error) {
+	suppliers := []models.Supplier{}
+	db := r.db.Model(&models.Supplier{})
+	if len(keyword) > 0 {
+		db = applyColumnLikeTokens(db, "name", keyword[0])
+	}
+	err := db.Order("name ASC").Find(&suppliers).Error
 	return suppliers, err
 }
 

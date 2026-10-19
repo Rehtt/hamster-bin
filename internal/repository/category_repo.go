@@ -37,6 +37,28 @@ func (r *CategoryRepository) GetAll() ([]models.Category, error) {
 	return categories, err
 }
 
+// List 在数据库中按名称、状态筛选；保留 ID 仅用于编辑时选择原关联分类。
+func (r *CategoryRepository) List(keyword, status string, keepID uint, page, pageSize int) ([]models.Category, int64, error) {
+	categories := []models.Category{}
+	db := applyColumnLikeTokens(r.db.Model(&models.Category{}), "name", keyword)
+	if status != "" && status != "all" {
+		if keepID > 0 {
+			db = db.Where("(status = ? OR id = ?)", status, keepID)
+		} else {
+			db = db.Where("status = ?", status)
+		}
+	}
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if page > 0 && pageSize > 0 {
+		db = db.Offset((page - 1) * pageSize).Limit(pageSize)
+	}
+	err := db.Order("name ASC, id ASC").Find(&categories).Error
+	return categories, total, err
+}
+
 // GetByID 根据ID获取分类
 func (r *CategoryRepository) GetByID(id uint) (*models.Category, error) {
 	var category models.Category

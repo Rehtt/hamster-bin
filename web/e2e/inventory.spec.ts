@@ -10,7 +10,9 @@ async function rowAction(page: Page, name: string) { await page.getByRole('butto
 
 test('统一搜索、分类和高级筛选写入 URL，分页可恢复', async ({ page, api }) => {
   void api; await page.goto('/components');
+  await expect(mainButton(page)).toBeVisible();
   await page.getByLabel('每页条数').selectOption('10');
+  await expect(page.getByText('第 1 / 3 页')).toBeVisible();
   await page.getByRole('button', { name: '下一页' }).click(); await expect(page).toHaveURL(/page=2/);
   await page.reload(); await expect(page.getByText('第 2 / 3 页')).toBeVisible();
   await page.getByRole('textbox', { name: '搜索元件' }).fill('贴片'); await page.getByRole('button', { name: '搜索', exact: true }).click();

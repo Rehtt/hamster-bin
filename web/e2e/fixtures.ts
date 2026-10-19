@@ -43,7 +43,12 @@ export async function mockApi(page: Page): Promise<MockApi> {
       if (path === '/components' && method === 'POST') { const component = { ...state.components[0], ...data, id: 99 } as Component; state.components.push(component); return ok(component); }
       return ok({});
     }
-    if (path === '/components/options') return ok({ manufacturers: ['YAGEO'], packages: ['0603', '0805'], locations: ['A1-03', 'B2-01'] });
+    const keyword = (url.searchParams.get('keyword') || '').toLowerCase();
+    const matches = (value: string) => keyword.split(/\s+/).filter(Boolean).every(token => value.toLowerCase().includes(token));
+    if (path === '/components/options') {
+      const options = { manufacturers: ['YAGEO'], packages: ['0603', '0805'], locations: ['A1-03', 'B2-01'] };
+      return ok(Object.fromEntries(Object.entries(options).filter(([key]) => !url.searchParams.get('field') || key === url.searchParams.get('field')).map(([key, values]) => [key, values.filter(matches)])));
+    }
     if (path === '/components/export') return route.fulfill({ contentType: 'text/csv', headers: { 'Content-Disposition': 'attachment; filename="components.csv"' }, body: '名称,库存数量\n贴片电阻,35\n' });
     if (path === '/components') {
       if (state.failList) return fail(503, '网络不可用');
@@ -53,8 +58,12 @@ export async function mockApi(page: Page): Promise<MockApi> {
       return list(items);
     }
     if (path.match(/^\/components\/\d+$/)) { const c = state.components.find(c => c.id === Number(path.split('/')[2])); return c ? ok(c) : fail(404, '元件已删除'); }
-    if (path === '/categories') return ok(state.categories);
-    if (path === '/suppliers') return ok([{ id: 1, name: '嘉立创' }]);
+    if (path === '/categories') {
+      const status = url.searchParams.get('status');
+      const items = state.categories.filter(c => matches(c.name) && (!status || status === 'all' || c.status === status || String(c.id) === url.searchParams.get('keep_id')));
+      return url.searchParams.has('page') || url.searchParams.has('page_size') ? list(items) : ok(items);
+    }
+    if (path === '/suppliers') return ok([{ id: 1, name: '嘉立创' }].filter(s => matches(s.name)));
     if (path === '/pre-stocks') return list(state.preStocks.filter(item => !url.searchParams.get('status') || url.searchParams.get('status') === 'all' || item.status === url.searchParams.get('status')));
     if (path.match(/^\/pre-stocks\/\d+$/)) return ok(state.preStocks.find(item => item.id === Number(path.split('/')[2])));
     if (path === '/stock-logs') return list(state.logs);

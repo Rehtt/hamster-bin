@@ -390,34 +390,34 @@ func (r *ComponentRepository) BatchUpdateLocation(ids []uint, location string) (
 }
 
 // GetDistinctPackages 获取历史封装列表（去重、非空、按名称排序）
-func (r *ComponentRepository) GetDistinctPackages() ([]string, error) {
-	var packages []string
-	err := r.db.Model(&models.Component{}).
-		Where("package <> ''").
-		Distinct("package").
-		Order("package ASC").
-		Pluck("package", &packages).Error
+func (r *ComponentRepository) GetDistinctPackages(keyword ...string) ([]string, error) {
+	packages := []string{}
+	db := r.db.Model(&models.Component{}).Where("package <> ''")
+	if len(keyword) > 0 {
+		db = applyColumnLikeTokens(db, "package", keyword[0])
+	}
+	err := db.Distinct("package").Order("package ASC").Pluck("package", &packages).Error
 	return packages, err
 }
 
 // GetDistinctLocations 获取历史位置列表（去重、非空、按名称排序）
-func (r *ComponentRepository) GetDistinctLocations() ([]string, error) {
-	var locations []string
-	err := r.db.Model(&models.Component{}).
-		Where("location <> ''").
-		Distinct("location").
-		Order("location ASC").
-		Pluck("location", &locations).Error
+func (r *ComponentRepository) GetDistinctLocations(keyword ...string) ([]string, error) {
+	locations := []string{}
+	db := r.db.Model(&models.Component{}).Where("location <> ''")
+	if len(keyword) > 0 {
+		db = applyColumnLikeTokens(db, "location", keyword[0])
+	}
+	err := db.Distinct("location").Order("location ASC").Pluck("location", &locations).Error
 	return locations, err
 }
 
 // GetDistinctManufacturers 获取历史制造商列表（去重、非空、按名称排序）
-func (r *ComponentRepository) GetDistinctManufacturers() ([]string, error) {
-	var manufacturers []string
-	err := r.db.Model(&models.Component{}).
-		Where("manufacturer <> ''").
-		Distinct("manufacturer").
-		Order("manufacturer ASC").
-		Pluck("manufacturer", &manufacturers).Error
+func (r *ComponentRepository) GetDistinctManufacturers(keyword ...string) ([]string, error) {
+	manufacturers := []string{}
+	db := r.db.Model(&models.Component{}).Where("manufacturer <> ''")
+	if len(keyword) > 0 {
+		db = applyColumnLikeTokens(db, "manufacturer", keyword[0])
+	}
+	err := db.Distinct("manufacturer").Order("manufacturer ASC").Pluck("manufacturer", &manufacturers).Error
 	return manufacturers, err
 }

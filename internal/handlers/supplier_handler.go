@@ -24,7 +24,7 @@ func NewSupplierHandler(db *gorm.DB) *SupplierHandler {
 // GetAll 获取所有供应商
 // @route GET /api/v1/suppliers
 func (h *SupplierHandler) GetAll(c *gin.Context) {
-	suppliers, err := h.repo.GetAll()
+	suppliers, err := h.repo.GetAll(c.Query("keyword"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取供应商失败"})
 		return

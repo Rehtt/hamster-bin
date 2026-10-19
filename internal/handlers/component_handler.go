@@ -280,31 +280,31 @@ func (h *ComponentHandler) ExportCSV(c *gin.Context) {
 // GetOptions 获取元件录入表单的历史选项（封装、位置、制造商）
 // @route GET /api/v1/components/options
 func (h *ComponentHandler) GetOptions(c *gin.Context) {
-	packages, err := h.componentRepo.GetDistinctPackages()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取封装选项失败"})
+	field, keyword := c.Query("field"), c.Query("keyword")
+	if field != "" && field != "packages" && field != "locations" && field != "manufacturers" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的选项字段"})
 		return
 	}
-
-	locations, err := h.componentRepo.GetDistinctLocations()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取位置选项失败"})
-		return
+	data := gin.H{}
+	for _, option := range []struct {
+		name string
+		load func(...string) ([]string, error)
+	}{
+		{"packages", h.componentRepo.GetDistinctPackages},
+		{"locations", h.componentRepo.GetDistinctLocations},
+		{"manufacturers", h.componentRepo.GetDistinctManufacturers},
+	} {
+		if field != "" && field != option.name {
+			continue
+		}
+		values, err := option.load(keyword)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取历史选项失败"})
+			return
+		}
+		data[option.name] = values
 	}
-
-	manufacturers, err := h.componentRepo.GetDistinctManufacturers()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取制造商选项失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data": gin.H{
-			"packages":      packages,
-			"locations":     locations,
-			"manufacturers": manufacturers,
-		},
-	})
+	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
 // GetByID 获取单个元件详情

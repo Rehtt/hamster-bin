@@ -24,21 +24,26 @@ func NewCategoryHandler(db *gorm.DB) *CategoryHandler {
 // GetAll 获取所有分类
 // @route GET /api/v1/categories
 func (h *CategoryHandler) GetAll(c *gin.Context) {
-	categories, err := h.repo.GetAll()
+	page, size := 0, 0
+	if c.Query("page") != "" || c.Query("page_size") != "" {
+		page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+		size, _ = strconv.Atoi(c.DefaultQuery("page_size", "20"))
+		if page < 1 || size < 1 || size > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "分页参数无效，每页应为 1–100 条"})
+			return
+		}
+	}
+	keepID, _ := strconv.ParseUint(c.Query("keep_id"), 10, 32)
+	categories, total, err := h.repo.List(c.Query("keyword"), c.Query("status"), uint(keepID), page, size)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取分类失败"})
 		return
 	}
-	if status := c.Query("status"); status != "" && status != "all" {
-		filtered := []models.Category{}
-		for _, category := range categories {
-			if category.Status == status {
-				filtered = append(filtered, category)
-			}
-		}
-		categories = filtered
+	response := gin.H{"data": categories}
+	if page > 0 {
+		response["pagination"] = gin.H{"page": page, "page_size": size, "total": total, "total_page": (total + int64(size) - 1) / int64(size)}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": categories})
+	c.JSON(http.StatusOK, response)
 }
 
 // GetByID 获取单个分类
