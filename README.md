@@ -36,6 +36,26 @@ Hamster Bin 是一个面向电子爱好者、实验室和小型团队的电子�
 
 前端开发与浏览器回归测试详见 [web/README.md](web/README.md)。Tailwind CSS 4 面向现代浏览器，最低要求为 Safari 16.4、Chrome 111、Firefox 128（[官方兼容说明](https://tailwindcss.com/docs/compatibility)）。
 
+### 页面截图
+
+以下截图使用示例数据，展示主要页面与浅色、深色主题。
+
+**仪表盘**：查看库存概况、期间统计和最近库存流水。
+
+![仪表盘：库存概况、期间统计和最近库存流水](docs/screenshots/dashboard.png)
+
+**元件管理**：搜索、筛选元件，查看库存、参考单价和存放位置。
+
+![元件管理：元件列表、库存数量和存放位置](docs/screenshots/components.png)
+
+**预入库**：核对采购记录，确认收货后转入正式库存。
+
+![预入库：待入库采购记录和状态切换](docs/screenshots/pre-stocks.png)
+
+**解析任务详情（深色主题）**：查看解析结果、供应商库存和阶梯报价，确认后应用到录入表单。
+
+![深色主题下的解析任务详情：元件资料和供应商参考报价](docs/screenshots/task-detail.png)
+
 ## 项目状态
 
 项目仍在持续迭代中，适合个人库存、实验室轻量管理和自托管使用。当前默认使用 SQLite，也可连接外部 MySQL/PostgreSQL；未内置多用户权限模型。如需公网部署，建议启用 HTTPS、强密码和足够随机的 `JWT_SECRET`。

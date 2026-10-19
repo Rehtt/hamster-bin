@@ -11,6 +11,7 @@ AI agent 修改项目时，应优先保持现有目录分层、API 路径、数�
 ```text
 .
 ├── README.md                  # 项目介绍、快速开始、配置和部署说明
+├── docs/screenshots/           # README 页面截图，使用示例数据展示主要页面及浅色/深色主题
 ├── LICENSE                    # MIT 许可证
 ├── Dockerfile                 # 多阶段 Docker 镜像构建（Node.js 24/pnpm + Go 静态编译 + Alpine 运行时）
 ├── docker-compose.yml         # Docker Compose 部署（默认本地 build + SQLite 卷）
