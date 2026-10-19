@@ -190,7 +190,7 @@ make build
 
 前端构建产物必须位于 `web/dist`，因为 `embed.go` 和 `internal/router/router.go` 依赖该路径提供嵌入式静态资源。
 
-Docker 镜像通过根目录 `Dockerfile` 多阶段构建：`node:24-alpine` 使用 pnpm 11.3.0 冻结安装并构建 `web/dist`，`golang:1.25-alpine3.23` 以 `CGO_ENABLED=0` 编译并注入 `VERSION`，运行时镜像为 `alpine:3.23`。容器默认监听 `8080`，数据目录 `/app/data`（`DB_DRIVER=sqlite`、`DB_PATH=/app/data/inventory.db`，`IMAGE_DIR=/app/data/images`），需挂载 volume 持久化 SQLite 与图片；连接外部 MySQL/PostgreSQL 时通过 `DB_DRIVER` 与 `DB_DSN` 覆盖。
+Docker 镜像通过根目录 `Dockerfile` 多阶段构建：前端基于 `node:24-bookworm-slim`，通过 `corepack enable && corepack prepare pnpm@11.3.0 --activate` 启用 pnpm，使用 `pnpm install --frozen-lockfile` 安装依赖，再执行 `pnpm build` 构建 `web/dist`；`golang:1.25-alpine3.23` 以 `CGO_ENABLED=0` 编译并注入 `VERSION`，运行时镜像为 `alpine:3.23`。容器默认监听 `8080`，数据目录 `/app/data`（`DB_DRIVER=sqlite`、`DB_PATH=/app/data/inventory.db`，`IMAGE_DIR=/app/data/images`），需挂载 volume 持久化 SQLite 与图片；连接外部 MySQL/PostgreSQL 时通过 `DB_DRIVER` 与 `DB_DSN` 覆盖。
 
 Docker Compose 部署（`docker-compose.yml`）：
 

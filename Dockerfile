@@ -1,14 +1,14 @@
-FROM node:24-alpine AS frontend
+FROM node:24-bookworm-slim AS frontend
 
 WORKDIR /src/web
 
-RUN npm install --global pnpm@11.3.0
+RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
 
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY web/ ./
-RUN pnpm run build
+RUN pnpm build
 
 FROM golang:1.25-alpine3.23 AS builder
 
